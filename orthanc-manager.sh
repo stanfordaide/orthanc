@@ -123,6 +123,42 @@ show_logs() {
     docker-compose logs -f
 }
 
+# Function to handle volume conflicts during update
+fix_volume_conflicts() {
+    echo -e "${YELLOW}🔧 Checking for volume conflicts...${NC}"
+    
+    local volumes_to_remove=()
+    
+    # Check if volumes exist with different configurations
+    if docker volume ls -q | grep -q "orthanc_orthanc-storage"; then
+        volumes_to_remove+=("orthanc_orthanc-storage")
+    fi
+    
+    if docker volume ls -q | grep -q "orthanc_orthanc-db-data"; then
+        volumes_to_remove+=("orthanc_orthanc-db-data")
+    fi
+    
+    if [[ ${#volumes_to_remove[@]} -gt 0 ]]; then
+        echo -e "${YELLOW}⚠️  Found conflicting Docker volumes that need to be recreated:${NC}"
+        printf '   • %s\n' "${volumes_to_remove[@]}"
+        echo -e "${YELLOW}This will recreate the volumes with new paths but preserve your data${NC}"
+        echo -e "${YELLOW}Continue? (yes/no): ${NC}"
+        read -r confirm
+        
+        if [[ "$confirm" == "yes" ]]; then
+            echo -e "${YELLOW}Removing old volumes...${NC}"
+            for volume in "${volumes_to_remove[@]}"; do
+                echo -e "  Removing: $volume"
+                docker volume rm "$volume" 2>/dev/null || true
+            done
+            echo -e "${GREEN}✅ Volume conflicts resolved${NC}"
+        else
+            echo -e "${RED}❌ Update cancelled${NC}"
+            exit 1
+        fi
+    fi
+}
+
 # Function to update configuration
 update_config() {
     echo -e "${YELLOW}🔧 Updating Orthanc configuration...${NC}"
@@ -151,6 +187,10 @@ update_config() {
     echo -e "${YELLOW}Stopping services for update...${NC}"
     cd "$ORTHANC_DIR"
     docker-compose stop
+    docker-compose down
+
+    # Check and fix volume conflicts
+    fix_volume_conflicts
     
     # Copy new configuration files
     echo -e "${YELLOW}Copying updated configuration...${NC}"
