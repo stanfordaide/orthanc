@@ -85,7 +85,7 @@
   
     // Network configuration
     "DicomModalities" : {
-        "MERCURE" : [ "orthanc", "localhost", 11112 ]
+        "MERCURE" : [ "orthanc", "172.17.0.1", 11112 ]
     },
     "DicomModalitiesInDatabase" : false,         // Store modalities in config vs database
     "DicomEchoChecksFind" : false,              // Test C-FIND capability during echo test
