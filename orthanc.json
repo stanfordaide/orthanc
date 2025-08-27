@@ -1,0 +1,162 @@
+{
+    // Basic server configuration
+    "Name" : "Orthanc",
+    "StorageDirectory" : "/var/lib/orthanc/db",    // Path for DICOM files storage
+    // "IndexDirectory" : "/var/lib/orthanc/db",      // Path for SQLite database index - REMOVE is postgres enabled
+    "StorageCompression" : false,                   // Compress stored DICOM files
+    "MaximumStorageSize" : 0,                      // Storage limit in MB (0 = unlimited)
+    "MaximumPatientCount" : 0,                     // Patient limit (0 = unlimited)
+    "ConcurrentJobs" : 2,                          // Max parallel processing jobs
+  
+    // Scripts and plugins
+    "LuaScripts" : ["/etc/orthanc/lua/autosend_leg_length.lua"],
+    "Plugins" : [ 
+      "/usr/share/orthanc/plugins", 
+      "/usr/local/share/orthanc/plugins"
+    ],
+  
+    // PostgreSQL Database Configuration
+    "PostgreSQL" : {
+      "EnableIndex" : true,                     // Store DICOM metadata in PostgreSQL for faster queries
+      "EnableStorage" : false,                  // Keep DICOM files on disk (recommended for performance)
+      "Host" : "orthanc-db",                   // PostgreSQL container service name
+      "Port" : 5432,                          // Internal container port
+      "Database" : "orthanc",                  // Database name created at startup
+      "Username" : "orthanc",                  // Database user with full access
+      "Password" : "orthanc_secure_password_2024",  // Database password (change in production)
+      "EnableSsl" : false,                     // SSL disabled for internal network
+      "MaximumConnectionRetries" : 10,         // Retry attempts during startup
+      "ConnectionRetryInterval" : 5,           // Seconds between connection attempts
+      "PrepareIndex" : true,                   // Auto-create database schema on first run
+      "Lock" : true                           // Enable database locking for data integrity
+    },                                          // ✅ ADDED MISSING COMMA HERE
+
+    // HTTP server settings
+    "HttpServerEnabled" : true,                    // Enable REST API and web interface
+    "OrthancExplorerEnabled" : true,               // Enable web UI
+    "HttpPort" : 8042,                            // HTTP port for REST API
+    "HttpDescribeErrors" : true,                   // Include error details in responses
+    "HttpCompressionEnabled" : true,               // Enable gzip compression
+    "HttpThreadsCount" : 50,                      // HTTP server thread pool size
+    "HttpRequestTimeout" : 30,                    // HTTP request timeout in seconds
+  
+    // WebDAV file sharing
+    "WebDavEnabled" : true,                       // Enable WebDAV access
+    "WebDavDeleteAllowed" : false,                // Allow file deletion via WebDAV
+    "WebDavUploadAllowed" : true,                 // Allow file upload via WebDAV
+  
+    // DICOM server configuration
+    "DicomServerEnabled" : true,                  // Enable DICOM protocol
+    "DicomAet" : "ORTHANC_LPCH",                  // DICOM Application Entity Title
+    "DicomCheckCalledAet" : false,               // Verify called AET on incoming requests
+    "DicomPort" : 4242,                          // DICOM protocol port
+    "DefaultEncoding" : "Latin1",                // Default character encoding
+    "AcceptedTransferSyntaxes" : [ "1.2.840.10008.1.*" ],  // Accepted DICOM transfer syntaxes
+    "UnknownSopClassAccepted" : false,           // Accept unknown DICOM types
+    "DicomScpTimeout" : 30,                      // Server connection timeout
+    "DicomScuTimeout" : 10,                      // Client connection timeout
+    "DicomScuPreferredTransferSyntax" : "1.2.840.10008.1.2.1",  // Preferred transfer syntax for outgoing
+  
+    // Security - HTTP
+    "RemoteAccessAllowed" : true,                 // Allow connections from other hosts
+    "SslEnabled" : false,                        // Enable HTTPS
+    "SslCertificate" : "certificate.pem",       // SSL certificate path
+    "SslMinimumProtocolVersion" : 4,             // Minimum SSL/TLS version (4 = TLS 1.2)
+    "SslVerifyPeers" : false,                    // Verify client certificates
+    "SslTrustedClientCertificates" : "trustedClientCertificates.pem",
+  
+    // Security - Authentication
+    "AuthenticationEnabled" : true,               // Enable HTTP basic authentication
+    "RegisteredUsers" : {
+      "orthanc_admin": "helloaide123"             // Username:password pairs
+    },
+  
+    // Security - DICOM TLS
+    "DicomTlsEnabled" : false,                   // Enable DICOM over TLS
+    "DicomTlsRemoteCertificateRequired" : true,  // Require client certificates
+  
+    // DICOM access control
+    "DicomAlwaysAllowEcho" : true,               // Allow C-ECHO from any source
+    "DicomAlwaysAllowStore" : true,              // Allow C-STORE from any source
+    "DicomAlwaysAllowFind" : false,              // Allow C-FIND from any source
+    "DicomAlwaysAllowGet" : false,               // Allow C-GET from any source
+    "DicomAlwaysAllowMove" : false,              // Allow C-MOVE from any source
+    "DicomCheckModalityHost" : false,            // Verify modality IP addresses
+  
+    // Network configuration
+    "DicomModalities" : {
+        "MERCURE" : [ "orthanc", "localhost", 11112 ]
+    },
+    "DicomModalitiesInDatabase" : false,         // Store modalities in config vs database
+    "DicomEchoChecksFind" : false,              // Test C-FIND capability during echo test
+  
+    "OrthancPeers" : {},                        // Other Orthanc servers
+    "OrthancPeersInDatabase" : true,           // Store peers in database vs config
+  
+    // HTTP client settings
+    "HttpProxy" : "",                           // HTTP proxy configuration
+    "HttpVerbose" : false,                      // Debug HTTP requests
+    "HttpTimeout" : 60,                        // HTTP client timeout
+    "HttpsVerifyPeers" : true,                 // Verify SSL certificates
+    "HttpsCACertificates" : "/etc/ssl/certs/ca-certificates.crt",  // CA certificates
+  
+    // Performance and limits
+    "KeepAlive" : true,                        // Use persistent HTTP connections
+    "TcpNoDelay" : true,                       // Disable Nagle's algorithm
+    "StableAge" : 60,                          // Seconds before study considered stable
+    "LimitFindResults" : 0,                    // Max C-FIND results (0 = unlimited)
+    "LimitFindInstances" : 0,                  // Max instance-level find results
+    "LimitJobs" : 10,                          // Max active background jobs
+    "QueryRetrieveSize" : 100,                 // Cache size for C-FIND requests
+    "JobsHistorySize" : 10,                    // Completed jobs kept in memory
+    "MediaArchiveSize" : 1,                    // ZIP archives cache size
+    "StorageCommitmentReportsSize" : 100,      // Storage commitment reports cache
+    "MaximumPduLength" : 16384,                // DICOM PDU size limit in bytes
+  
+    // Data handling
+    "UserMetadata" : {},                       // Custom metadata definitions
+    "UserContentType" : {},                    // Custom attachment types
+    "StrictAetComparison" : false,             // Case-sensitive AET matching
+    "StoreMD5ForAttachments" : true,           // Compute MD5 for corruption detection
+    "StoreDicom" : true,                       // Store DICOM files (vs index-only)
+    "OverwriteInstances" : false,              // Replace duplicate instances
+    "CaseSensitivePN" : false,                 // Case-sensitive patient name search
+  
+    // Job management
+    "LogExportedResources" : false,            // Log exports to other systems
+    "SaveJobs" : true,                         // Persist jobs across restarts
+    "SynchronousCMove" : true,                 // Handle C-MOVE synchronously
+    "DicomAssociationCloseDelay" : 5,          // Lua DICOM connection timeout
+  
+    // Advanced features
+    "LoadPrivateDictionary" : true,            // Load built-in private tag dictionary
+    "Dictionary" : {},                         // Custom DICOM tag definitions
+    "DefaultPrivateCreator" : "",              // Default private tag creator
+    "MetricsEnabled" : true,                   // Enable Prometheus metrics
+    "ExecuteLuaEnabled" : false,               // Allow script execution via REST API
+    "StorageAccessOnFind" : "Always",          // Storage access during queries
+    "SyncStorageArea" : true,                  // Force disk sync after writes
+  
+    // DICOM processing
+    "TranscodeDicomProtocol" : true,           // Auto-transcode for compatibility
+    "BuiltinDecoderTranscoderOrder" : "After", // Built-in vs plugin decoder priority
+    "IngestTranscodingOfUncompressed" : true,  // Transcode uncompressed incoming files
+    "IngestTranscodingOfCompressed" : true,    // Transcode compressed incoming files
+    "DicomLossyTranscodingQuality" : 90,       // JPEG compression quality (1-100)
+  
+    // System optimization
+    "MallocArenaMax" : 5,                      // Memory allocation optimization
+    "SynchronousZipStream" : true,             // Stream ZIP files vs temp files
+  
+    // Privacy and logging
+    "DeidentifyLogs" : true,                   // Remove patient info from logs
+    "DeidentifyLogsDicomVersion" : "2021b",    // DICOM standard for deidentification
+  
+    // Database features
+    "CheckRevisions" : false,                  // Enable revision-based conflict detection
+  
+    // Custom plugin configuration
+    "Tcia" : {
+      "Enable" : true
+    }
+}
