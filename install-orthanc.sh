@@ -191,7 +191,7 @@ show_completion() {
 main() {
     echo -e "${GREEN}Starting Orthanc installation from: $SCRIPT_DIR${NC}"
     
-    check_root
+    # check_root
     check_files
     create_directories
     setup_database_password
