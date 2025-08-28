@@ -24,7 +24,7 @@ services:
     environment:
       - POSTGRES_DB=orthanc
       - POSTGRES_USER=orthanc
-      - POSTGRES_PASSWORD=orthanc_secure_password_2024
+      - POSTGRES_PASSWORD=ChangePasswordHere
       - TZ=America/Los_Angeles
     volumes:
       - orthanc-db-data:/var/lib/postgresql/data

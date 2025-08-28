@@ -23,7 +23,7 @@
       "Port" : 5432,                          // Internal container port
       "Database" : "orthanc",                  // Database name created at startup
       "Username" : "orthanc",                  // Database user with full access
-      "Password" : "orthanc_secure_password_2024",  // Database password (change in production)
+      "Password" : "ChangePasswordHere",  // Database password (change in production)
       "EnableSsl" : false,                     // SSL disabled for internal network
       "MaximumConnectionRetries" : 10,         // Retry attempts during startup
       "ConnectionRetryInterval" : 5,           // Seconds between connection attempts
