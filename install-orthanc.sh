@@ -1,17 +1,20 @@
 #!/bin/bash
 
 # install_orthanc.sh - Automated Orthanc installation with PostgreSQL
-# Usage: ./install_orthanc.sh [DATA_PATH]
+# Usage: ./install_orthanc.sh [DICOM_STORAGE_PATH]
 # Run this script from the directory containing docker-compose.yml, orthanc.json, etc.
+# PostgreSQL data stays local, only DICOM storage uses the provided path
 
 set -e  # Exit on any error
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_ORTHANC_DIR="/opt/orthanc"
+DEFAULT_DICOM_STORAGE="/opt/orthanc/dicom-storage"
+DEFAULT_LOCAL_DIR="/opt/orthanc"
 
-# Accept data path as command line argument or use default
-ORTHANC_DIR="${1:-$DEFAULT_ORTHANC_DIR}"
+# Accept DICOM storage path as command line argument or use default
+DICOM_STORAGE_DIR="${1:-$DEFAULT_DICOM_STORAGE}"
+LOCAL_INSTALL_DIR="$DEFAULT_LOCAL_DIR"
 
 # Colors for output
 RED='\033[0;31m'
@@ -21,7 +24,8 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 echo -e "${GREEN}🏥 Installing Orthanc with dedicated PostgreSQL...${NC}"
-echo -e "${BLUE}📍 Data will be stored in: $ORTHANC_DIR${NC}"
+echo -e "${BLUE}📍 DICOM storage: $DICOM_STORAGE_DIR${NC}"
+echo -e "${BLUE}📍 Local config/DB: $LOCAL_INSTALL_DIR${NC}"
 
 # Function to generate secure password
 generate_password() {
@@ -36,15 +40,15 @@ check_root() {
     fi
 }
 
-# Function to validate and check data path
-validate_data_path() {
-    echo -e "${YELLOW}📋 Validating data path: $ORTHANC_DIR${NC}"
+# Function to validate DICOM storage path
+validate_dicom_storage_path() {
+    echo -e "${YELLOW}📋 Validating DICOM storage path: $DICOM_STORAGE_DIR${NC}"
     
     # Check if path exists and is accessible
-    if [[ ! -d "$ORTHANC_DIR" ]]; then
+    if [[ ! -d "$DICOM_STORAGE_DIR" ]]; then
         echo -e "${YELLOW}📁 Directory doesn't exist, attempting to create...${NC}"
-        if ! mkdir -p "$ORTHANC_DIR" 2>/dev/null; then
-            echo -e "${RED}❌ Cannot create directory: $ORTHANC_DIR${NC}"
+        if ! mkdir -p "$DICOM_STORAGE_DIR" 2>/dev/null; then
+            echo -e "${RED}❌ Cannot create directory: $DICOM_STORAGE_DIR${NC}"
             echo -e "${YELLOW}💡 For network drives, ensure:${NC}"
             echo -e "   • The network drive is mounted"
             echo -e "   • You have write permissions"
@@ -54,11 +58,11 @@ validate_data_path() {
     fi
     
     # Test write permissions
-    local test_file="$ORTHANC_DIR/.write_test_$$"
+    local test_file="$DICOM_STORAGE_DIR/.write_test_$$"
     if ! touch "$test_file" 2>/dev/null; then
-        echo -e "${RED}❌ No write permission to: $ORTHANC_DIR${NC}"
+        echo -e "${RED}❌ No write permission to: $DICOM_STORAGE_DIR${NC}"
         echo -e "${YELLOW}💡 Try:${NC}"
-        echo -e "   • chown -R \$USER:\$USER $ORTHANC_DIR"
+        echo -e "   • chown -R \$USER:\$USER $DICOM_STORAGE_DIR"
         echo -e "   • Check network drive mount permissions"
         exit 1
     fi
@@ -66,7 +70,7 @@ validate_data_path() {
     
     # Check available space (warn if less than 10GB)
     local available_space
-    available_space=$(df -BG "$ORTHANC_DIR" 2>/dev/null | awk 'NR==2 {print \$4}' | tr -d 'G' || echo "0")
+    available_space=$(df -BG "$DICOM_STORAGE_DIR" 2>/dev/null | awk 'NR==2 {print $4}' | tr -d 'G' || echo "0")
     if [[ $available_space -lt 10 && $available_space -ne 0 ]]; then
         echo -e "${YELLOW}⚠️  Warning: Less than 10GB available space (${available_space}GB)${NC}"
         echo -e "${YELLOW}   Medical imaging requires significant storage space${NC}"
@@ -77,7 +81,32 @@ validate_data_path() {
         fi
     fi
     
-    echo -e "${GREEN}✅ Data path validated${NC}"
+    echo -e "${GREEN}✅ DICOM storage path validated${NC}"
+}
+
+# Function to validate local installation path
+validate_local_install_path() {
+    echo -e "${YELLOW}📋 Validating local installation path: $LOCAL_INSTALL_DIR${NC}"
+    
+    # Check if we can create/access the local directory
+    if [[ ! -d "$LOCAL_INSTALL_DIR" ]]; then
+        echo -e "${YELLOW}📁 Creating local installation directory...${NC}"
+        if ! mkdir -p "$LOCAL_INSTALL_DIR" 2>/dev/null; then
+            echo -e "${RED}❌ Cannot create local directory: $LOCAL_INSTALL_DIR${NC}"
+            echo -e "${YELLOW}💡 You may need to run with sudo or choose a different path${NC}"
+            exit 1
+        fi
+    fi
+    
+    # Test write permissions to local directory
+    local test_file="$LOCAL_INSTALL_DIR/.write_test_$$"
+    if ! touch "$test_file" 2>/dev/null; then
+        echo -e "${RED}❌ No write permission to: $LOCAL_INSTALL_DIR${NC}"
+        exit 1
+    fi
+    rm -f "$test_file"
+    
+    echo -e "${GREEN}✅ Local installation path validated${NC}"
 }
 
 # Function to check required files exist
@@ -112,30 +141,34 @@ check_files() {
 
 # Function to create target directories
 create_directories() {
-    echo -e "${YELLOW}📁 Creating Orthanc directories...${NC}"
+    echo -e "${YELLOW}📁 Creating directories...${NC}"
     
-    # Create subdirectories
-    mkdir -p "$ORTHANC_DIR"/{postgres-data,orthanc-storage,config}
+    # Create local directories (postgres-data, config)
+    mkdir -p "$LOCAL_INSTALL_DIR"/{postgres-data,config}
     
-    # For network drives, we need to be more careful with permissions
-    if mountpoint -q "$ORTHANC_DIR" 2>/dev/null || [[ "$ORTHANC_DIR" =~ ^/mnt/ ]] || [[ "$ORTHANC_DIR" =~ ^/media/ ]]; then
-        echo -e "${BLUE}🌐 Network/mounted drive detected${NC}"
+    # Create DICOM storage directory
+    mkdir -p "$DICOM_STORAGE_DIR"
+    
+    # Set permissions for local directories
+    if [[ $EUID -eq 0 ]]; then
+        # Running as root, set proper ownership for local dirs
+        chown -R 1000:1000 "$LOCAL_INSTALL_DIR" 2>/dev/null || true
+    else
+        chown -R $USER:$USER "$LOCAL_INSTALL_DIR" 2>/dev/null || true
+    fi
+    
+    # Set permissions for DICOM storage (handle network drives)
+    if mountpoint -q "$DICOM_STORAGE_DIR" 2>/dev/null || [[ "$DICOM_STORAGE_DIR" =~ ^/mnt/ ]] || [[ "$DICOM_STORAGE_DIR" =~ ^/media/ ]]; then
+        echo -e "${BLUE}🌐 Network/mounted drive detected for DICOM storage${NC}"
         # Set permissions that work with most network filesystems
-        chmod -R 755 "$ORTHANC_DIR" 2>/dev/null || true
-        
-        # Create a special postgres directory with specific permissions
-        # We'll use a user-accessible location for postgres data on network drives
-        mkdir -p "$ORTHANC_DIR/postgres-data"
-        chmod 777 "$ORTHANC_DIR/postgres-data" 2>/dev/null || true  # More permissive for network drives
+        chmod -R 755 "$DICOM_STORAGE_DIR" 2>/dev/null || true
     else
         # Local drive - use standard permissions
         if [[ $EUID -eq 0 ]]; then
-            # Running as root, set proper ownership
-            chown -R 1000:1000 "$ORTHANC_DIR" 2>/dev/null || true
+            chown -R 1000:1000 "$DICOM_STORAGE_DIR" 2>/dev/null || true
         else
-            chown -R $USER:$USER "$ORTHANC_DIR" 2>/dev/null || true
+            chown -R $USER:$USER "$DICOM_STORAGE_DIR" 2>/dev/null || true
         fi
-        # Note: PostgreSQL container will handle its own permissions
     fi
     
     echo -e "${GREEN}✅ Directories created${NC}"
@@ -148,25 +181,26 @@ setup_database_password() {
     # Generate new password
     local DB_PWD=$(generate_password)
     
-    # Store password securely
-    echo "ORTHANC_DB_PASSWORD=$DB_PWD" > "$ORTHANC_DIR/.db_password"
-    chmod 600 "$ORTHANC_DIR/.db_password" 2>/dev/null || chmod 644 "$ORTHANC_DIR/.db_password"  # Fallback for network drives
+    # Store password securely in local directory
+    echo "ORTHANC_DB_PASSWORD=$DB_PWD" > "$LOCAL_INSTALL_DIR/.db_password"
+    chmod 600 "$LOCAL_INSTALL_DIR/.db_password" 2>/dev/null || chmod 644 "$LOCAL_INSTALL_DIR/.db_password"
     
     echo -e "${YELLOW}🔧 Updating configuration files...${NC}"
     
-    # Update docker-compose.yml - replace PostgreSQL password and ALL possible device paths
+    # Update docker-compose.yml - replace PostgreSQL password and set paths
+    # PostgreSQL data stays local, only DICOM storage goes to the specified directory
     sed -e "s/POSTGRES_PASSWORD=ChangePasswordHere/POSTGRES_PASSWORD=$DB_PWD/" \
-        -e "s|device: '/opt/orthanc/orthanc-storage'|device: '$ORTHANC_DIR/orthanc-storage'|g" \
-        -e "s|device: '/opt/orthanc/postgres-data'|device: '$ORTHANC_DIR/postgres-data'|g" \
-        -e "s|device: '/opt/mercure/addons/orthanc/orthanc-storage'|device: '$ORTHANC_DIR/orthanc-storage'|g" \
-        -e "s|device: '/opt/mercure/addons/orthanc/postgres-data'|device: '$ORTHANC_DIR/postgres-data'|g" \
-        -e "s|device: '/opt/projects/orthanc/orthanc-storage'|device: '$ORTHANC_DIR/orthanc-storage'|g" \
-        -e "s|device: '/opt/projects/orthanc/postgres-data'|device: '$ORTHANC_DIR/postgres-data'|g" \
-        "$SCRIPT_DIR/docker-compose.yml" > "$ORTHANC_DIR/docker-compose.yml"
+        -e "s|device: '/opt/orthanc/orthanc-storage'|device: '$DICOM_STORAGE_DIR'|g" \
+        -e "s|device: '/opt/orthanc/postgres-data'|device: '$LOCAL_INSTALL_DIR/postgres-data'|g" \
+        -e "s|device: '/opt/mercure/addons/orthanc/orthanc-storage'|device: '$DICOM_STORAGE_DIR'|g" \
+        -e "s|device: '/opt/mercure/addons/orthanc/postgres-data'|device: '$LOCAL_INSTALL_DIR/postgres-data'|g" \
+        -e "s|device: '/opt/projects/orthanc/orthanc-storage'|device: '$DICOM_STORAGE_DIR'|g" \
+        -e "s|device: '/opt/projects/orthanc/postgres-data'|device: '$LOCAL_INSTALL_DIR/postgres-data'|g" \
+        "$SCRIPT_DIR/docker-compose.yml" > "$LOCAL_INSTALL_DIR/docker-compose.yml"
     
     # Update orthanc.json - replace PostgreSQL password and save to config directory
     sed -e "s/ChangePasswordHere/$DB_PWD/" \
-        "$SCRIPT_DIR/orthanc.json" > "$ORTHANC_DIR/config/orthanc.json"
+        "$SCRIPT_DIR/orthanc.json" > "$LOCAL_INSTALL_DIR/config/orthanc.json"
     
     echo -e "${GREEN}✅ Database password configured${NC}"
 }
@@ -176,10 +210,10 @@ copy_files() {
     echo -e "${YELLOW}📋 Copying configuration files...${NC}"
     
     # Copy nginx configuration
-    cp "$SCRIPT_DIR/nginx.conf" "$ORTHANC_DIR/config/"
+    cp "$SCRIPT_DIR/nginx.conf" "$LOCAL_INSTALL_DIR/config/"
     
     # Copy lua scripts
-    cp -r "$SCRIPT_DIR/lua-scripts" "$ORTHANC_DIR/config/"
+    cp -r "$SCRIPT_DIR/lua-scripts" "$LOCAL_INSTALL_DIR/config/"
     
     # Update the docker-compose.yml to use the config subdirectory and fix file paths
     local temp_file=$(mktemp)
@@ -187,8 +221,8 @@ copy_files() {
         -e "s|./orthanc.json|./config/orthanc.json|g" \
         -e "s|./nginx.conf|./config/nginx.conf|g" \
         -e "s|./lua-scripts|./config/lua-scripts|g" \
-        "$ORTHANC_DIR/docker-compose.yml" > "$temp_file"
-    mv "$temp_file" "$ORTHANC_DIR/docker-compose.yml"
+        "$LOCAL_INSTALL_DIR/docker-compose.yml" > "$temp_file"
+    mv "$temp_file" "$LOCAL_INSTALL_DIR/docker-compose.yml"
     
     echo -e "${GREEN}✅ Configuration files copied${NC}"
 }
@@ -197,14 +231,14 @@ copy_files() {
 start_services() {
     echo -e "${YELLOW}🚀 Starting Orthanc services...${NC}"
     
-    cd "$ORTHANC_DIR"
+    cd "$LOCAL_INSTALL_DIR"
     
     # For network drives, we might need to set COMPOSE_CONVERT_WINDOWS_PATHS
     export COMPOSE_CONVERT_WINDOWS_PATHS=1
     
     echo -e "${BLUE}Debug: Working directory: $(pwd)${NC}"
     echo -e "${BLUE}Debug: Files in directory:${NC}"
-    ls -la "$ORTHANC_DIR/"
+    ls -la "$LOCAL_INSTALL_DIR/"
     
     docker-compose up -d
     
@@ -220,28 +254,11 @@ start_services() {
 verify_installation() {
     echo -e "${YELLOW}🔍 Verifying installation...${NC}"
     
-    cd "$ORTHANC_DIR"
+    cd "$LOCAL_INSTALL_DIR"
     
     # Check if containers are running
     if docker-compose ps | grep -q "Up"; then
         echo -e "${GREEN}✅ Containers are running${NC}"
-        
-        # Verify volume mounts are correct
-        echo -e "${YELLOW}🔍 Checking volume mounts...${NC}"
-        local storage_mount=$(docker volume inspect "$(basename $ORTHANC_DIR)_orthanc-storage" 2>/dev/null | grep -o '"Mountpoint": "[^"]*"' | cut -d'"' -f4 || echo "")
-        local db_mount=$(docker volume inspect "$(basename $ORTHANC_DIR)_orthanc-db-data" 2>/dev/null | grep -o '"Mountpoint": "[^"]*"' | cut -d'"' -f4 || echo "")
-        
-        if [[ "$storage_mount" == "$ORTHANC_DIR/orthanc-storage" ]]; then
-            echo -e "${GREEN}✅ Storage volume correctly mounted to: $storage_mount${NC}"
-        else
-            echo -e "${YELLOW}⚠️  Storage volume mount: $storage_mount${NC}"
-        fi
-        
-        if [[ "$db_mount" == "$ORTHANC_DIR/postgres-data" ]]; then
-            echo -e "${GREEN}✅ Database volume correctly mounted to: $db_mount${NC}"
-        else
-            echo -e "${YELLOW}⚠️  Database volume mount: $db_mount${NC}"
-        fi
         
         # Test Orthanc connectivity
         echo -e "${YELLOW}🏥 Testing Orthanc connectivity...${NC}"
@@ -261,12 +278,12 @@ verify_installation() {
         fi
         
         # Check actual data directory contents
-        echo -e "${YELLOW}📁 Checking data directories...${NC}"
-        if [[ -d "$ORTHANC_DIR/orthanc-storage" ]]; then
-            echo -e "${GREEN}✅ Orthanc storage directory exists${NC}"
+        echo -e "${YELLOW}📁 Checking directories...${NC}"
+        if [[ -d "$DICOM_STORAGE_DIR" ]]; then
+            echo -e "${GREEN}✅ DICOM storage directory exists: $DICOM_STORAGE_DIR${NC}"
         fi
-        if [[ -d "$ORTHANC_DIR/postgres-data" ]]; then
-            echo -e "${GREEN}✅ PostgreSQL data directory exists${NC}"
+        if [[ -d "$LOCAL_INSTALL_DIR/postgres-data" ]]; then
+            echo -e "${GREEN}✅ PostgreSQL data directory exists: $LOCAL_INSTALL_DIR/postgres-data${NC}"
         fi
         
     else
@@ -275,7 +292,7 @@ verify_installation() {
     fi
 }
 
-# Function to display completion message (continued)
+# Function to display completion message
 show_completion() {
     echo -e "\n${GREEN}🎉 Orthanc installation completed successfully!${NC}"
     echo -e "\n${YELLOW}📋 Service Information:${NC}"
@@ -284,47 +301,64 @@ show_completion() {
     echo -e "  • DICOM Port: 4242"
     echo -e "  • PostgreSQL: localhost:5433"
     echo -e "\n${YELLOW}🔐 Security Information:${NC}"
-    echo -e "  • Database password stored in: $ORTHANC_DIR/.db_password"
-    echo -e "\n${YELLOW}📁 Installation Directory:${NC}"
-    echo -e "  • Main: $ORTHANC_DIR"
-    echo -e "  • Config: $ORTHANC_DIR/config/"
-    echo -e "  • Data Storage: $ORTHANC_DIR/orthanc-storage/"
-    echo -e "  • Database: $ORTHANC_DIR/postgres-data/"
+    echo -e "  • Database password stored in: $LOCAL_INSTALL_DIR/.db_password"
+    echo -e "\n${YELLOW}📁 Installation Directories:${NC}"
+    echo -e "  • Main Installation: $LOCAL_INSTALL_DIR"
+    echo -e "  • Configuration: $LOCAL_INSTALL_DIR/config/"
+    echo -e "  • PostgreSQL Data (local): $LOCAL_INSTALL_DIR/postgres-data/"
+    echo -e "  • DICOM Storage: $DICOM_STORAGE_DIR"
     echo -e "\n${YELLOW}🛠️  Management Commands:${NC}"
-    echo -e "  • Start: cd $ORTHANC_DIR && docker-compose up -d"
-    echo -e "  • Stop: cd $ORTHANC_DIR && docker-compose down"
-    echo -e "  • Logs: cd $ORTHANC_DIR && docker-compose logs -f"
-    echo -e "  • Status: cd $ORTHANC_DIR && docker-compose ps"
+    echo -e "  • Start: cd $LOCAL_INSTALL_DIR && docker-compose up -d"
+    echo -e "  • Stop: cd $LOCAL_INSTALL_DIR && docker-compose down"
+    echo -e "  • Logs: cd $LOCAL_INSTALL_DIR && docker-compose logs -f"
+    echo -e "  • Status: cd $LOCAL_INSTALL_DIR && docker-compose ps"
     echo -e "\n${YELLOW}📝 Next Steps:${NC}"
     echo -e "  • Access Orthanc at http://localhost:8042 to upload DICOM files"
     echo -e "  • Check logs if services don't respond immediately"
-    echo -e "  • DICOM files will be stored in: $ORTHANC_DIR/orthanc-storage"
+    echo -e "  • DICOM files will be stored in: $DICOM_STORAGE_DIR"
     
-    if mountpoint -q "$ORTHANC_DIR" 2>/dev/null || [[ "$ORTHANC_DIR" =~ ^/mnt/ ]] || [[ "$ORTHANC_DIR" =~ ^/media/ ]]; then
+    if mountpoint -q "$DICOM_STORAGE_DIR" 2>/dev/null || [[ "$DICOM_STORAGE_DIR" =~ ^/mnt/ ]] || [[ "$DICOM_STORAGE_DIR" =~ ^/media/ ]]; then
         echo -e "\n${BLUE}🌐 Network Drive Notes:${NC}"
+        echo -e "  • DICOM storage is on a network/mounted drive"
         echo -e "  • Ensure the network drive remains mounted"
         echo -e "  • Consider adding to /etc/fstab for persistent mounting"
         echo -e "  • Monitor network connectivity for optimal performance"
+        echo -e "  • PostgreSQL data remains local for optimal database performance"
     fi
     
     echo -e "\n${BLUE}🔍 Verification Commands:${NC}"
-    echo -e "  • Check volumes: docker volume ls | grep $(basename $ORTHANC_DIR)"
-    echo -e "  • Check storage: ls -la $ORTHANC_DIR/orthanc-storage/"
-    echo -e "  • Check database: ls -la $ORTHANC_DIR/postgres-data/"
-    echo -e "  • View password: cat $ORTHANC_DIR/.db_password"
+    echo -e "  • Check volumes: docker volume ls | grep $(basename $LOCAL_INSTALL_DIR)"
+    echo -e "  • Check DICOM storage: ls -la $DICOM_STORAGE_DIR/"
+    echo -e "  • Check database: ls -la $LOCAL_INSTALL_DIR/postgres-data/"
+    echo -e "  • View password: cat $LOCAL_INSTALL_DIR/.db_password"
+    
+    echo -e "\n${GREEN}📊 Storage Architecture:${NC}"
+    echo -e "  • Database (PostgreSQL): Local storage for performance"
+    echo -e "  • DICOM Files: Network/external storage for capacity"
+    echo -e "  • Configuration: Local storage for reliability"
 }
 
 # Function to show usage
 show_usage() {
     echo -e "${YELLOW}Usage:${NC}"
-    echo -e "  $0 [DATA_PATH]"
+    echo -e "  $0 [DICOM_STORAGE_PATH]"
+    echo -e ""
+    echo -e "${YELLOW}Description:${NC}"
+    echo -e "  Installs Orthanc with PostgreSQL database stored locally"
+    echo -e "  and DICOM files stored in the specified directory."
     echo -e ""
     echo -e "${YELLOW}Examples:${NC}"
-    echo -e "  $0                           # Use default path (/opt/orthanc)"
-    echo -e "  $0 /mnt/nas/orthanc         # Use network drive"
-    echo -e "  $0 /home/user/orthanc-data  # Use user directory"
-    echo -e "  $0 /media/external/orthanc  # Use external drive"
-    echo -e "  $0 /opt/orthanc-test/data   # Use custom path"
+    echo -e "  $0                           # Use default path (/opt/orthanc/dicom-storage)"
+    echo -e "  $0 /data                     # Store DICOM files in /data"
+    echo -e "  $0 /mnt/nas/orthanc         # Use network drive for DICOM storage"
+    echo -e "  $0 /home/user/dicom-data    # Use user directory for DICOM storage"
+    echo -e "  $0 /media/external/dicom    # Use external drive for DICOM storage"
+    echo -e ""
+    echo -e "${YELLOW}Notes:${NC}"
+    echo -e "  • PostgreSQL data always stays in /opt/orthanc/postgres-data (local)"
+    echo -e "  • Configuration files stay in /opt/orthanc/config/ (local)"
+    echo -e "  • Only DICOM storage location is configurable"
+    echo -e "  • This provides optimal database performance with flexible storage"
 }
 
 # Main execution
@@ -336,10 +370,12 @@ main() {
     fi
     
     echo -e "${GREEN}Starting Orthanc installation from: $SCRIPT_DIR${NC}"
-    echo -e "${BLUE}Target data directory: $ORTHANC_DIR${NC}"
+    echo -e "${BLUE}DICOM storage directory: $DICOM_STORAGE_DIR${NC}"
+    echo -e "${BLUE}Local installation directory: $LOCAL_INSTALL_DIR${NC}"
     
     check_root
-    validate_data_path
+    validate_dicom_storage_path
+    validate_local_install_path
     check_files
     create_directories
     setup_database_password
