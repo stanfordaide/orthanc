@@ -143,8 +143,8 @@ check_files() {
 create_directories() {
     echo -e "${YELLOW}📁 Creating directories...${NC}"
     
-    # Create local directories (postgres-data, config)
-    mkdir -p "$LOCAL_INSTALL_DIR"/{postgres-data,config}
+    # Create local directories (postgres-data only, since we'll keep files in root)
+    mkdir -p "$LOCAL_INSTALL_DIR/postgres-data"
     
     # Create DICOM storage directory
     mkdir -p "$DICOM_STORAGE_DIR"
@@ -187,20 +187,15 @@ setup_database_password() {
     
     echo -e "${YELLOW}🔧 Updating configuration files...${NC}"
     
-    # Update docker-compose.yml - replace PostgreSQL password and set paths
-    # PostgreSQL data stays local, only DICOM storage goes to the specified directory
+    # Update docker-compose.yml - replace PostgreSQL password and volume device paths
     sed -e "s/POSTGRES_PASSWORD=ChangePasswordHere/POSTGRES_PASSWORD=$DB_PWD/" \
         -e "s|device: '/opt/orthanc/orthanc-storage'|device: '$DICOM_STORAGE_DIR'|g" \
         -e "s|device: '/opt/orthanc/postgres-data'|device: '$LOCAL_INSTALL_DIR/postgres-data'|g" \
-        -e "s|device: '/opt/mercure/addons/orthanc/orthanc-storage'|device: '$DICOM_STORAGE_DIR'|g" \
-        -e "s|device: '/opt/mercure/addons/orthanc/postgres-data'|device: '$LOCAL_INSTALL_DIR/postgres-data'|g" \
-        -e "s|device: '/opt/projects/orthanc/orthanc-storage'|device: '$DICOM_STORAGE_DIR'|g" \
-        -e "s|device: '/opt/projects/orthanc/postgres-data'|device: '$LOCAL_INSTALL_DIR/postgres-data'|g" \
         "$SCRIPT_DIR/docker-compose.yml" > "$LOCAL_INSTALL_DIR/docker-compose.yml"
     
-    # Update orthanc.json - replace PostgreSQL password and save to config directory
+    # Update orthanc.json - replace PostgreSQL password
     sed -e "s/ChangePasswordHere/$DB_PWD/" \
-        "$SCRIPT_DIR/orthanc.json" > "$LOCAL_INSTALL_DIR/config/orthanc.json"
+        "$SCRIPT_DIR/orthanc.json" > "$LOCAL_INSTALL_DIR/orthanc.json"
     
     echo -e "${GREEN}✅ Database password configured${NC}"
 }
@@ -209,20 +204,11 @@ setup_database_password() {
 copy_files() {
     echo -e "${YELLOW}📋 Copying configuration files...${NC}"
     
-    # Copy nginx configuration
-    cp "$SCRIPT_DIR/nginx.conf" "$LOCAL_INSTALL_DIR/config/"
+    # Copy nginx configuration to root (docker-compose expects ./nginx.conf)
+    cp "$SCRIPT_DIR/nginx.conf" "$LOCAL_INSTALL_DIR/"
     
-    # Copy lua scripts
-    cp -r "$SCRIPT_DIR/lua-scripts" "$LOCAL_INSTALL_DIR/config/"
-    
-    # Update the docker-compose.yml to use the config subdirectory and fix file paths
-    local temp_file=$(mktemp)
-    sed -e "s|file: orthanc.json|file: config/orthanc.json|g" \
-        -e "s|./orthanc.json|./config/orthanc.json|g" \
-        -e "s|./nginx.conf|./config/nginx.conf|g" \
-        -e "s|./lua-scripts|./config/lua-scripts|g" \
-        "$LOCAL_INSTALL_DIR/docker-compose.yml" > "$temp_file"
-    mv "$temp_file" "$LOCAL_INSTALL_DIR/docker-compose.yml"
+    # Copy lua scripts to root (docker-compose expects ./lua-scripts)
+    cp -r "$SCRIPT_DIR/lua-scripts" "$LOCAL_INSTALL_DIR/"
     
     echo -e "${GREEN}✅ Configuration files copied${NC}"
 }
@@ -240,14 +226,14 @@ start_services() {
     echo -e "${BLUE}Debug: Files in directory:${NC}"
     ls -la "$LOCAL_INSTALL_DIR/"
     
-    docker compose up -d
+    docker-compose up -d
     
     echo -e "${GREEN}✅ Services started${NC}"
     echo -e "${YELLOW}⏳ Waiting for services to initialize...${NC}"
     sleep 15
     
     # Check service status
-    docker compose ps
+    docker-compose ps
 }
 
 # Function to verify installation
@@ -257,7 +243,7 @@ verify_installation() {
     cd "$LOCAL_INSTALL_DIR"
     
     # Check if containers are running
-    if docker compose ps | grep -q "Up"; then
+    if docker-compose ps | grep -q "Up"; then
         echo -e "${GREEN}✅ Containers are running${NC}"
         
         # Test Orthanc connectivity
@@ -271,7 +257,7 @@ verify_installation() {
         
         # Test database connectivity
         echo -e "${YELLOW}🗄️  Checking database logs...${NC}"
-        if docker compose logs orthanc-db | grep -q "database system is ready"; then
+        if docker-compose logs orthanc-db | grep -q "database system is ready"; then
             echo -e "${GREEN}✅ Database is ready${NC}"
         else
             echo -e "${YELLOW}⚠️  Database may still be initializing...${NC}"
@@ -288,9 +274,10 @@ verify_installation() {
         
     else
         echo -e "${RED}❌ Some containers failed to start${NC}"
-        docker compose logs
+        docker-compose logs
     fi
 }
+
 
 # Function to display completion message
 show_completion() {
@@ -304,7 +291,6 @@ show_completion() {
     echo -e "  • Database password stored in: $LOCAL_INSTALL_DIR/.db_password"
     echo -e "\n${YELLOW}📁 Installation Directories:${NC}"
     echo -e "  • Main Installation: $LOCAL_INSTALL_DIR"
-    echo -e "  • Configuration: $LOCAL_INSTALL_DIR/config/"
     echo -e "  • PostgreSQL Data (local): $LOCAL_INSTALL_DIR/postgres-data/"
     echo -e "  • DICOM Storage: $DICOM_STORAGE_DIR"
     echo -e "\n${YELLOW}🛠️  Management Commands:${NC}"
@@ -356,7 +342,7 @@ show_usage() {
     echo -e ""
     echo -e "${YELLOW}Notes:${NC}"
     echo -e "  • PostgreSQL data always stays in /opt/orthanc/postgres-data (local)"
-    echo -e "  • Configuration files stay in /opt/orthanc/config/ (local)"
+    echo -e "  • Configuration files stay in /opt/orthanc/ (local)"
     echo -e "  • Only DICOM storage location is configurable"
     echo -e "  • This provides optimal database performance with flexible storage"
 }
