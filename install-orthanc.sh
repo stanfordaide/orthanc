@@ -158,7 +158,7 @@ setup_database_password() {
         -e "s|device: '/opt/orthanc/postgres-data'|device: '$ORTHANC_DIR/postgres-data'|g" \
         -e "s|device: '/opt/mercure/addons/orthanc/orthanc-storage'|device: '$ORTHANC_DIR/orthanc-storage'|g" \
         -e "s|device: '/opt/mercure/addons/orthanc/postgres-data'|device: '$ORTHANC_DIR/postgres-data'|g" \
-        "$SCRIPT_DIR/docker-compose.yml" > "$temp_compose"
+        "$SCRIPT_DIR/docker-compose.yml" > "$ORTHANC_DIR/docker-compose.yml"
     
     # Update orthanc.json - replace PostgreSQL password
     sed -e "s/ChangePasswordHere/$DB_PWD/" \
