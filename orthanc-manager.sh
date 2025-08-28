@@ -97,7 +97,7 @@ check_installation() {
 start_services() {
     echo -e "${GREEN}🚀 Starting Orthanc services...${NC}"
     cd "$ORTHANC_DIR"
-    docker-compose up -d
+    docker compose up -d
     echo -e "${GREEN}✅ Services started${NC}"
     
     echo -e "${YELLOW}⏳ Waiting for services to initialize...${NC}"
@@ -109,7 +109,7 @@ start_services() {
 stop_services() {
     echo -e "${YELLOW}🛑 Stopping Orthanc services...${NC}"
     cd "$ORTHANC_DIR"
-    docker-compose stop
+    docker compose stop
     echo -e "${GREEN}✅ Services stopped${NC}"
 }
 
@@ -117,7 +117,7 @@ stop_services() {
 restart_services() {
     echo -e "${YELLOW}🔄 Restarting Orthanc services...${NC}"
     cd "$ORTHANC_DIR"
-    docker-compose restart
+    docker compose restart
     echo -e "${GREEN}✅ Services restarted${NC}"
     
     echo -e "${YELLOW}⏳ Waiting for services to initialize...${NC}"
@@ -129,7 +129,7 @@ restart_services() {
 show_status() {
     echo -e "${BLUE}📊 Orthanc Service Status:${NC}"
     cd "$ORTHANC_DIR"
-    docker-compose ps
+    docker compose ps
     
     echo -e "\n${BLUE}🌐 Service URLs:${NC}"
     echo -e "  • Orthanc Web UI: http://localhost:8042"
@@ -164,7 +164,7 @@ show_status() {
 show_logs() {
     echo -e "${BLUE}📋 Orthanc Service Logs (Press Ctrl+C to exit):${NC}"
     cd "$ORTHANC_DIR"
-    docker-compose logs -f
+    docker compose logs -f
 }
 
 # Function to handle volume conflicts during update
@@ -238,8 +238,8 @@ update_config() {
     # Stop services
     echo -e "${YELLOW}Stopping services for update...${NC}"
     cd "$ORTHANC_DIR"
-    docker-compose stop
-    docker-compose down
+    docker compose stop
+    docker compose down
 
     # Check and fix volume conflicts
     fix_volume_conflicts
@@ -270,7 +270,7 @@ update_config() {
     
     # Restart services
     echo -e "${YELLOW}Restarting with new configuration...${NC}"
-    docker-compose up -d
+    docker compose up -d
     
     echo -e "${GREEN}✅ Configuration updated and services restarted${NC}"
     
@@ -318,7 +318,7 @@ create_backup() {
     # Stop services for consistent backup
     echo -e "${YELLOW}Stopping services for backup...${NC}"
     cd "$ORTHANC_DIR"
-    docker-compose stop
+    docker compose stop
     
     # Backup configuration
     cp "$ORTHANC_DIR/docker-compose.yml" "$backup_path/" 2>/dev/null || true
@@ -354,7 +354,7 @@ EOF
     
     # Restart services
     echo -e "${YELLOW}Restarting services...${NC}"
-    docker-compose start
+    docker compose start
     
     echo -e "${GREEN}✅ Full backup created: $backup_path${NC}"
     echo -e "${YELLOW}Backup size: $(du -sh "$backup_path" | cut -f1)${NC}"
@@ -434,7 +434,7 @@ restore_from_path() {
     
     # Stop services
     cd "$ORTHANC_DIR"
-    docker-compose down
+    docker compose down
     
     # Restore configuration files
     echo -e "${YELLOW}Restoring configuration...${NC}"
@@ -480,7 +480,7 @@ restore_from_path() {
     
     # Start services
     echo -e "${YELLOW}Starting restored services...${NC}"
-    docker-compose up -d
+    docker compose up -d
     
     echo -e "${GREEN}✅ Restore completed${NC}"
     
@@ -510,14 +510,14 @@ delete_installation() {
     cd "$ORTHANC_DIR"
     
     # Stop and remove containers
-    docker-compose down
+    docker compose down
     
     # Remove any orphaned containers
-    docker-compose down --remove-orphans
+    docker compose down --remove-orphans
     
     # Remove images (optional - comment out if you want to keep images)
     echo -e "${YELLOW}Removing Docker images...${NC}"
-    docker-compose down --rmi all 2>/dev/null || true
+    docker compose down --rmi all 2>/dev/null || true
     
     echo -e "${GREEN}✅ Containers removed${NC}"
     echo -e "${YELLOW}📁 Data preserved in:${NC}"
@@ -561,7 +561,7 @@ purge_installation() {
     if [[ -f "$ORTHANC_DIR/docker-compose.yml" ]]; then
         cd "$ORTHANC_DIR"
         echo -e "${YELLOW}Stopping containers...${NC}"
-        docker-compose down --volumes --remove-orphans --rmi all 2>/dev/null || true
+        docker compose down --volumes --remove-orphans --rmi all 2>/dev/null || true
     fi
     
     # Remove Docker networks (if created by this installation)
@@ -779,14 +779,14 @@ migrate_storage() {
     # Stop services
     echo -e "${YELLOW}Stopping services...${NC}"
     cd "$ORTHANC_DIR"
-    docker-compose stop
+    docker compose stop
     
     # Copy data
     echo -e "${YELLOW}Copying DICOM data...${NC}"
     if [[ -d "$current_dicom_path" ]] && [[ "$(ls -A "$current_dicom_path" 2>/dev/null)" ]]; then
         cp -r "$current_dicom_path"/* "$new_path/" || {
             echo -e "${RED}❌ Failed to copy data${NC}"
-            docker-compose start
+            docker compose start
             return
         }
         echo -e "${GREEN}✅ Data copied successfully${NC}"
@@ -800,8 +800,8 @@ migrate_storage() {
     
     # Restart services
     echo -e "${YELLOW}Restarting services...${NC}"
-    docker-compose down --volumes  # Remove old volume bindings
-    docker-compose up -d
+    docker compose down --volumes  # Remove old volume bindings
+    docker compose up -d
     
     echo -e "${GREEN}✅ Migration completed${NC}"
     echo -e "${BLUE}New DICOM storage location: $new_path${NC}"
