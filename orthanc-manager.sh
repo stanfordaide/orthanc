@@ -19,10 +19,44 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
+# Function to detect DICOM storage path from docker-compose.yml
+detect_dicom_storage_path() {
+    local dicom_storage_path=""
+    
+    if [[ -f "$ORTHANC_DIR/docker-compose.yml" ]]; then
+        # Extract the device path for orthanc-storage volume
+        dicom_storage_path=$(grep -A 5 "orthanc-storage:" "$ORTHANC_DIR/docker-compose.yml" | grep "device:" | sed "s/.*device: *['\"]*//" | sed "s/['\"]*.*//" | head -1)
+    fi
+    
+    # Fallback to default if not found
+    if [[ -z "$dicom_storage_path" ]]; then
+        dicom_storage_path="/opt/orthanc/orthanc-storage"
+    fi
+    
+    echo "$dicom_storage_path"
+}
+
+# Function to detect PostgreSQL data path from docker-compose.yml
+detect_postgres_data_path() {
+    local postgres_data_path=""
+    
+    if [[ -f "$ORTHANC_DIR/docker-compose.yml" ]]; then
+        # Extract the device path for postgres data volume
+        postgres_data_path=$(grep -A 5 "orthanc-db-data:" "$ORTHANC_DIR/docker-compose.yml" | grep "device:" | sed "s/.*device: *['\"]*//" | sed "s/['\"]*.*//" | head -1)
+    fi
+    
+    # Fallback to default if not found
+    if [[ -z "$postgres_data_path" ]]; then
+        postgres_data_path="/opt/orthanc/postgres-data"
+    fi
+    
+    echo "$postgres_data_path"
+}
+
 # Function to print usage
 show_usage() {
     echo -e "${CYAN}🏥 Orthanc Management Script${NC}"
-    echo -e "${YELLOW}Usage: \$0 [command]${NC}"
+    echo -e "${YELLOW}Usage: \\$0 [command]${NC}"
     echo -e ""
     echo -e "${BLUE}Available commands:${NC}"
     echo -e "  ${GREEN}start${NC}     - Start Orthanc services"
@@ -33,14 +67,16 @@ show_usage() {
     echo -e "  ${GREEN}update${NC}    - Update Orthanc configuration and restart"
     echo -e "  ${GREEN}backup${NC}    - Backup Orthanc data and configuration"
     echo -e "  ${GREEN}restore${NC}   - Restore from backup"
+    echo -e "  ${GREEN}usage${NC}     - Show disk usage and storage paths"
+    echo -e "  ${GREEN}clean${NC}     - Clean old backups"
     echo -e "  ${YELLOW}delete${NC}    - Stop and remove containers (keep data)"
     echo -e "  ${RED}purge${NC}     - Complete removal (containers + data + config)"
     echo -e ""
     echo -e "${YELLOW}Examples:${NC}"
-    echo -e "  \$0 start"
-    echo -e "  \$0 logs"
-    echo -e "  \$0 backup"
-    echo -e "  \$0 update"
+    echo -e "  \\$0 start"
+    echo -e "  \\$0 logs"
+    echo -e "  \\$0 backup"
+    echo -e "  \\$0 update"
 }
 
 # Function to check if Orthanc is installed
@@ -100,6 +136,14 @@ show_status() {
     echo -e "  • OHIF Viewer: http://localhost:8008"
     echo -e "  • DICOM Port: 4242"
     echo -e "  • PostgreSQL: localhost:5433"
+    
+    # Show storage paths
+    local dicom_path=$(detect_dicom_storage_path)
+    local postgres_path=$(detect_postgres_data_path)
+    
+    echo -e "\n${BLUE}📁 Storage Locations:${NC}"
+    echo -e "  • DICOM Storage: $dicom_path"
+    echo -e "  • Database: $postgres_path"
     
     # Test connectivity
     echo -e "\n${BLUE}🔗 Connectivity Tests:${NC}"
@@ -180,6 +224,14 @@ update_config() {
         exit 1
     fi
     
+    # Detect current storage paths before backup
+    local current_dicom_path=$(detect_dicom_storage_path)
+    local current_postgres_path=$(detect_postgres_data_path)
+    
+    echo -e "${BLUE}Current storage paths:${NC}"
+    echo -e "  • DICOM: $current_dicom_path"
+    echo -e "  • PostgreSQL: $current_postgres_path"
+    
     # Backup current config
     backup_config
     
@@ -200,6 +252,20 @@ update_config() {
     
     if [[ -d "$SCRIPT_DIR/lua-scripts" ]]; then
         cp -r "$SCRIPT_DIR/lua-scripts"/* "$ORTHANC_DIR/lua-scripts/" 2>/dev/null || true
+    fi
+    
+    # Check if storage paths changed
+    local new_dicom_path=$(detect_dicom_storage_path)
+    local new_postgres_path=$(detect_postgres_data_path)
+    
+    if [[ "$current_dicom_path" != "$new_dicom_path" ]]; then
+        echo -e "${YELLOW}⚠️  DICOM storage path changed: $current_dicom_path → $new_dicom_path${NC}"
+        echo -e "${YELLOW}You may need to migrate data manually if this was unintended${NC}"
+    fi
+    
+    if [[ "$current_postgres_path" != "$new_postgres_path" ]]; then
+        echo -e "${YELLOW}⚠️  PostgreSQL data path changed: $current_postgres_path → $new_postgres_path${NC}"
+        echo -e "${YELLOW}You may need to migrate data manually if this was unintended${NC}"
     fi
     
     # Restart services
@@ -239,6 +305,14 @@ create_backup() {
     
     echo -e "${YELLOW}💾 Creating full backup (data + config)...${NC}"
     
+    # Detect current storage paths
+    local dicom_path=$(detect_dicom_storage_path)
+    local postgres_path=$(detect_postgres_data_path)
+    
+    echo -e "${BLUE}Backing up from:${NC}"
+    echo -e "  • DICOM Storage: $dicom_path"
+    echo -e "  • PostgreSQL Data: $postgres_path"
+    
     mkdir -p "$backup_path"
     
     # Stop services for consistent backup
@@ -253,19 +327,29 @@ create_backup() {
     cp "$ORTHANC_DIR/.db_password" "$backup_path/" 2>/dev/null || true
     cp -r "$ORTHANC_DIR/lua-scripts" "$backup_path/" 2>/dev/null || true
     
-    # Backup data directories
-    echo -e "${YELLOW}Backing up DICOM storage...${NC}"
-    cp -r "$ORTHANC_DIR/orthanc-storage" "$backup_path/" 2>/dev/null || true
+# Backup data directories using detected paths
+    echo -e "${YELLOW}Backing up DICOM storage from $dicom_path...${NC}"
+    if [[ -d "$dicom_path" ]]; then
+        cp -r "$dicom_path" "$backup_path/dicom-storage" 2>/dev/null || true
+    else
+        echo -e "${YELLOW}⚠️  DICOM storage directory not found: $dicom_path${NC}"
+    fi
     
-    echo -e "${YELLOW}Backing up PostgreSQL data...${NC}"
-    cp -r "$ORTHANC_DIR/postgres-data" "$backup_path/" 2>/dev/null || true
+    echo -e "${YELLOW}Backing up PostgreSQL data from $postgres_path...${NC}"
+    if [[ -d "$postgres_path" ]]; then
+        cp -r "$postgres_path" "$backup_path/postgres-data" 2>/dev/null || true
+    else
+        echo -e "${YELLOW}⚠️  PostgreSQL data directory not found: $postgres_path${NC}"
+    fi
     
-    # Create backup info file
+    # Create backup info file with storage paths
     cat > "$backup_path/backup_info.txt" << EOF
 Backup Created: $(date)
 Orthanc Version: $(docker image ls jodogne/orthanc-python --format "table {{.Tag}}" | tail -n +2 | head -1)
 PostgreSQL Version: $(docker image ls postgres --format "table {{.Tag}}" | tail -n +2 | head -1)
 Backup Type: Full (Configuration + Data)
+DICOM Storage Path: $dicom_path
+PostgreSQL Data Path: $postgres_path
 EOF
     
     # Restart services
@@ -294,6 +378,15 @@ restore_backup() {
             echo -e "  ${i}. $backup"
             if [[ -f "$backup_path/backup_info.txt" ]]; then
                 echo -e "     $(head -1 "$backup_path/backup_info.txt" | cut -d: -f2-)"
+                # Show storage paths if available
+                local dicom_backup_path=$(grep "DICOM Storage Path:" "$backup_path/backup_info.txt" 2>/dev/null | cut -d: -f2- | xargs)
+                local postgres_backup_path=$(grep "PostgreSQL Data Path:" "$backup_path/backup_info.txt" 2>/dev/null | cut -d: -f2- | xargs)
+                if [[ -n "$dicom_backup_path" ]]; then
+                    echo -e "     DICOM: $dicom_backup_path"
+                fi
+                if [[ -n "$postgres_backup_path" ]]; then
+                    echo -e "     DB: $postgres_backup_path"
+                fi
             fi
             ((i++))
         fi
@@ -331,6 +424,14 @@ restore_from_path() {
     
     echo -e "${YELLOW}🔄 Restoring from backup: $(basename "$backup_path")${NC}"
     
+    # Get current storage paths
+    local current_dicom_path=$(detect_dicom_storage_path)
+    local current_postgres_path=$(detect_postgres_data_path)
+    
+    echo -e "${BLUE}Restoring to current paths:${NC}"
+    echo -e "  • DICOM: $current_dicom_path"
+    echo -e "  • PostgreSQL: $current_postgres_path"
+    
     # Stop services
     cd "$ORTHANC_DIR"
     docker-compose down
@@ -347,18 +448,34 @@ restore_from_path() {
         cp -r "$backup_path/lua-scripts" "$ORTHANC_DIR/"
     fi
     
-    # Restore data if available
-    if [[ -d "$backup_path/orthanc-storage" ]]; then
-        echo -e "${YELLOW}Restoring DICOM storage...${NC}"
-        rm -rf "$ORTHANC_DIR/orthanc-storage"
-        cp -r "$backup_path/orthanc-storage" "$ORTHANC_DIR/"
+    # Restore data to current paths (not necessarily where they were backed up from)
+    if [[ -d "$backup_path/dicom-storage" ]]; then
+        echo -e "${YELLOW}Restoring DICOM storage to $current_dicom_path...${NC}"
+        rm -rf "$current_dicom_path"
+        mkdir -p "$(dirname "$current_dicom_path")"
+        cp -r "$backup_path/dicom-storage" "$current_dicom_path"
+        
+        # Set appropriate permissions
+        if [[ $EUID -eq 0 ]]; then
+            chown -R 1000:1000 "$current_dicom_path"
+        else
+            chown -R $USER:$USER "$current_dicom_path" 2>/dev/null || true
+        fi
     fi
     
     if [[ -d "$backup_path/postgres-data" ]]; then
-        echo -e "${YELLOW}Restoring PostgreSQL data...${NC}"
-        rm -rf "$ORTHANC_DIR/postgres-data"
-        cp -r "$backup_path/postgres-data" "$ORTHANC_DIR/"
-        chown -R 999:999 "$ORTHANC_DIR/postgres-data"
+        echo -e "${YELLOW}Restoring PostgreSQL data to $current_postgres_path...${NC}"
+        rm -rf "$current_postgres_path"
+        mkdir -p "$(dirname "$current_postgres_path")"
+        cp -r "$backup_path/postgres-data" "$current_postgres_path"
+        
+        # Set PostgreSQL permissions
+        if [[ $EUID -eq 0 ]]; then
+            chown -R 999:999 "$current_postgres_path"
+        else
+            # Try to set permissions, but don't fail if we can't
+            chown -R 999:999 "$current_postgres_path" 2>/dev/null || true
+        fi
     fi
     
     # Start services
@@ -373,7 +490,13 @@ restore_from_path() {
 
 # Function to delete (remove containers, keep data)
 delete_installation() {
+    local dicom_path=$(detect_dicom_storage_path)
+    local postgres_path=$(detect_postgres_data_path)
+    
     echo -e "${YELLOW}⚠️  This will stop and remove Orthanc containers but keep data${NC}"
+    echo -e "${BLUE}Data will be preserved in:${NC}"
+    echo -e "  • DICOM Storage: $dicom_path"
+    echo -e "  • PostgreSQL Data: $postgres_path"
     echo -e "${YELLOW}Are you sure? (yes/no): ${NC}"
     read -r confirm
     
@@ -398,21 +521,24 @@ delete_installation() {
     
     echo -e "${GREEN}✅ Containers removed${NC}"
     echo -e "${YELLOW}📁 Data preserved in:${NC}"
-    echo -e "  • $ORTHANC_DIR/orthanc-storage (DICOM files)"
-    echo -e "  • $ORTHANC_DIR/postgres-data (Database)"
+    echo -e "  • $dicom_path (DICOM files)"
+    echo -e "  • $postgres_path (Database)"
     echo -e "  • $ORTHANC_DIR/*.json, *.yml (Configuration)"
     echo -e "${BLUE}💡 Run './orthanc_manager.sh start' to recreate containers with existing data${NC}"
 }
 
 # Function to purge (complete removal)
 purge_installation() {
+    local dicom_path=$(detect_dicom_storage_path)
+    local postgres_path=$(detect_postgres_data_path)
+    
     echo -e "${RED}🚨 DANGER: This will completely remove Orthanc and ALL data!${NC}"
     echo -e "${RED}This action cannot be undone!${NC}"
     echo -e ""
     echo -e "${YELLOW}What will be removed:${NC}"
     echo -e "  • All Docker containers and images"
-    echo -e "  • All DICOM files ($ORTHANC_DIR/orthanc-storage)"
-    echo -e "  • Database data ($ORTHANC_DIR/postgres-data)" 
+    echo -e "  • All DICOM files ($dicom_path)"
+    echo -e "  • Database data ($postgres_path)" 
     echo -e "  • Configuration files ($ORTHANC_DIR)"
     echo -e "  • Backups ($BACKUP_DIR)"
     echo -e ""
@@ -442,10 +568,12 @@ purge_installation() {
     echo -e "${YELLOW}Cleaning up Docker networks...${NC}"
     docker network rm orthanc_default 2>/dev/null || true
     
-    # Remove all data and configuration
-    echo -e "${YELLOW}Removing data directories...${NC}"
-    rm -rf "$ORTHANC_DIR/orthanc-storage"
-    rm -rf "$ORTHANC_DIR/postgres-data"
+    # Remove all data using detected paths
+    echo -e "${YELLOW}Removing DICOM storage: $dicom_path...${NC}"
+    rm -rf "$dicom_path"
+    
+    echo -e "${YELLOW}Removing PostgreSQL data: $postgres_path...${NC}"
+    rm -rf "$postgres_path"
     
     echo -e "${YELLOW}Removing configuration files...${NC}"
     rm -f "$ORTHANC_DIR/docker-compose.yml"
@@ -470,29 +598,60 @@ purge_installation() {
 
 # Function to show disk usage
 show_disk_usage() {
-    echo -e "${BLUE}💾 Orthanc Disk Usage:${NC}"
+    local dicom_path=$(detect_dicom_storage_path)
+    local postgres_path=$(detect_postgres_data_path)
     
+    echo -e "${BLUE}💾 Orthanc Disk Usage:${NC}"
+    echo -e "${YELLOW}Storage Paths:${NC}"
+    echo -e "  • DICOM Storage: $dicom_path"
+    echo -e "  • PostgreSQL Data: $postgres_path"
+    echo -e "  • Configuration: $ORTHANC_DIR"
+    
+    echo -e "\n${YELLOW}Disk Usage:${NC}"
     if [[ -d "$ORTHANC_DIR" ]]; then
-        echo -e "${YELLOW}Installation Directory:${NC}"
-        echo -e "  Total: $(du -sh "$ORTHANC_DIR" 2>/dev/null | cut -f1 || echo "N/A")"
+        echo -e "  Installation Directory: $(du -sh "$ORTHANC_DIR" 2>/dev/null | cut -f1 || echo "N/A")"
+    fi
+    
+    if [[ -d "$dicom_path" ]]; then
+        echo -e "  DICOM Files: $(du -sh "$dicom_path" 2>/dev/null | cut -f1 || echo "N/A")"
         
-        if [[ -d "$ORTHANC_DIR/orthanc-storage" ]]; then
-            echo -e "  DICOM Files: $(du -sh "$ORTHANC_DIR/orthanc-storage" 2>/dev/null | cut -f1 || echo "N/A")"
+        # Show DICOM file count if directory exists
+        local dicom_count=$(find "$dicom_path" -name "*.dcm" 2>/dev/null | wc -l || echo "0")
+        if [[ $dicom_count -gt 0 ]]; then
+            echo -e "  DICOM File Count: $dicom_count files"
         fi
-        
-        if [[ -d "$ORTHANC_DIR/postgres-data" ]]; then
-            echo -e "  Database: $(du -sh "$ORTHANC_DIR/postgres-data" 2>/dev/null | cut -f1 || echo "N/A")"
-        fi
+    else
+        echo -e "  DICOM Files: Directory not found"
+    fi
+    
+    if [[ -d "$postgres_path" ]]; then
+        echo -e "  Database: $(du -sh "$postgres_path" 2>/dev/null | cut -f1 || echo "N/A")"
+    else
+        echo -e "  Database: Directory not found"
     fi
     
     if [[ -d "$BACKUP_DIR" ]]; then
-        echo -e "${YELLOW}Backups:${NC}"
-        echo -e "  Total: $(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1 || echo "N/A")"
-        echo -e "  Count: $(ls -1 "$BACKUP_DIR" 2>/dev/null | wc -l) backups"
+        echo -e "  Backups: $(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1 || echo "N/A")"
+        echo -e "  Backup Count: $(ls -1 "$BACKUP_DIR" 2>/dev/null | wc -l) backups"
     fi
     
-    echo -e "${YELLOW}Docker Images:${NC}"
-    echo -e "$(docker images | grep -E "(orthanc|postgres|ohif)" | awk '{print "  " $1 ":" $2 " - " $7}' 2>/dev/null || echo "  No Orthanc-related images found")"
+    echo -e "\n${YELLOW}Docker Images:${NC}"
+    echo -e "$(docker images | grep -E "(orthanc|postgres|ohif)" | awk '{print "  " \$1 ":" \$2 " - " \$7}' 2>/dev/null || echo "  No Orthanc-related images found")"
+    
+# Check if DICOM storage is on a network mount
+    if mountpoint -q "$dicom_path" 2>/dev/null || [[ "$dicom_path" =~ ^/mnt/ ]] || [[ "$dicom_path" =~ ^/media/ ]] || [[ "$dicom_path" =~ ^/data ]]; then
+        echo -e "\n${BLUE}🌐 Network Storage Info:${NC}"
+        echo -e "  • DICOM storage appears to be on a network/mounted drive"
+        echo -e "  • Mount point: $(df "$dicom_path" 2>/dev/null | tail -1 | awk '{print $1}' || echo "Unknown")"
+        echo -e "  • File system: $(df -T "$dicom_path" 2>/dev/null | tail -1 | awk '{print $2}' || echo "Unknown")"
+        
+        # Check mount status
+        if mountpoint -q "$dicom_path" 2>/dev/null; then
+            echo -e "  • Status: ${GREEN}✅ Properly mounted${NC}"
+        else
+            echo -e "  • Status: ${YELLOW}⚠️  Not detected as mount point${NC}"
+        fi
+    fi
 }
 
 # Function to clean old backups
@@ -524,6 +683,135 @@ clean_backups() {
     
     local new_count=$(ls -1 "$BACKUP_DIR" 2>/dev/null | wc -l)
     echo -e "${GREEN}✅ Cleanup complete. Backups: $backup_count → $new_count${NC}"
+}
+
+# Function to validate storage paths
+validate_storage_paths() {
+    local dicom_path=$(detect_dicom_storage_path)
+    local postgres_path=$(detect_postgres_data_path)
+    
+    echo -e "${BLUE}🔍 Validating Storage Paths:${NC}"
+    
+    # Check DICOM storage
+    if [[ -d "$dicom_path" ]]; then
+        if [[ -w "$dicom_path" ]]; then
+            echo -e "  • DICOM Storage: ${GREEN}✅ $dicom_path (writable)${NC}"
+        else
+            echo -e "  • DICOM Storage: ${YELLOW}⚠️  $dicom_path (not writable)${NC}"
+        fi
+    else
+        echo -e "  • DICOM Storage: ${RED}❌ $dicom_path (does not exist)${NC}"
+    fi
+    
+    # Check PostgreSQL data
+    if [[ -d "$postgres_path" ]]; then
+        echo -e "  • PostgreSQL Data: ${GREEN}✅ $postgres_path (exists)${NC}"
+    else
+        echo -e "  • PostgreSQL Data: ${YELLOW}⚠️  $postgres_path (does not exist)${NC}"
+    fi
+    
+    # Check configuration directory
+    if [[ -d "$ORTHANC_DIR" ]]; then
+        if [[ -w "$ORTHANC_DIR" ]]; then
+            echo -e "  • Configuration: ${GREEN}✅ $ORTHANC_DIR (writable)${NC}"
+        else
+            echo -e "  • Configuration: ${YELLOW}⚠️  $ORTHANC_DIR (not writable)${NC}"
+        fi
+    else
+        echo -e "  • Configuration: ${RED}❌ $ORTHANC_DIR (does not exist)${NC}"
+    fi
+}
+
+# Function to migrate storage (if paths change)
+migrate_storage() {
+    echo -e "${YELLOW}🚚 Storage Migration Tool${NC}"
+    echo -e "${BLUE}This tool helps migrate DICOM storage to a new location${NC}"
+    
+    local current_dicom_path=$(detect_dicom_storage_path)
+    
+    echo -e "\n${YELLOW}Current DICOM storage path: $current_dicom_path${NC}"
+    echo -e "${YELLOW}Enter new DICOM storage path (or press Enter to cancel): ${NC}"
+    read -r new_path
+    
+    if [[ -z "$new_path" ]]; then
+        echo -e "${YELLOW}Migration cancelled${NC}"
+        return
+    fi
+    
+    # Validate new path
+    if [[ ! -d "$new_path" ]]; then
+        echo -e "${YELLOW}Directory doesn't exist. Create it? (yes/no): ${NC}"
+        read -r create_confirm
+        if [[ "$create_confirm" == "yes" ]]; then
+            mkdir -p "$new_path" || {
+                echo -e "${RED}❌ Failed to create directory${NC}"
+                return
+            }
+        else
+            echo -e "${YELLOW}Migration cancelled${NC}"
+            return
+        fi
+    fi
+    
+    # Check if new path is writable
+    if [[ ! -w "$new_path" ]]; then
+        echo -e "${RED}❌ New path is not writable: $new_path${NC}"
+        return
+    fi
+    
+    echo -e "${YELLOW}⚠️  This will:${NC}"
+    echo -e "  • Stop Orthanc services"
+    echo -e "  • Copy all DICOM data from $current_dicom_path to $new_path"
+    echo -e "  • Update docker-compose.yml"
+    echo -e "  • Restart services"
+    echo -e "${YELLOW}Continue? (yes/no): ${NC}"
+    read -r migrate_confirm
+    
+    if [[ "$migrate_confirm" != "yes" ]]; then
+        echo -e "${YELLOW}Migration cancelled${NC}"
+        return
+    fi
+    
+    # Create backup first
+    echo -e "${YELLOW}Creating backup before migration...${NC}"
+    create_backup
+    
+    # Stop services
+    echo -e "${YELLOW}Stopping services...${NC}"
+    cd "$ORTHANC_DIR"
+    docker-compose stop
+    
+    # Copy data
+    echo -e "${YELLOW}Copying DICOM data...${NC}"
+    if [[ -d "$current_dicom_path" ]] && [[ "$(ls -A "$current_dicom_path" 2>/dev/null)" ]]; then
+        cp -r "$current_dicom_path"/* "$new_path/" || {
+            echo -e "${RED}❌ Failed to copy data${NC}"
+            docker-compose start
+            return
+        }
+        echo -e "${GREEN}✅ Data copied successfully${NC}"
+    else
+        echo -e "${YELLOW}⚠️  No data found in current storage directory${NC}"
+    fi
+    
+    # Update docker-compose.yml
+    echo -e "${YELLOW}Updating configuration...${NC}"
+    sed -i "s|device: '$current_dicom_path'|device: '$new_path'|g" "$ORTHANC_DIR/docker-compose.yml"
+    
+    # Restart services
+    echo -e "${YELLOW}Restarting services...${NC}"
+    docker-compose down --volumes  # Remove old volume bindings
+    docker-compose up -d
+    
+    echo -e "${GREEN}✅ Migration completed${NC}"
+    echo -e "${BLUE}New DICOM storage location: $new_path${NC}"
+    
+    # Verify migration
+    sleep 10
+    show_status
+    
+    echo -e "\n${YELLOW}⚠️  If everything is working correctly, you can remove the old data:${NC}"
+    echo -e "  rm -rf $current_dicom_path"
 }
 
 # Main script logic
@@ -571,10 +859,19 @@ main() {
             purge_installation
             ;;
         "usage"|"disk")
+            check_installation
             show_disk_usage
             ;;
         "clean")
             clean_backups
+            ;;
+        "validate")
+            check_installation
+            validate_storage_paths
+            ;;
+        "migrate")
+            check_installation
+            migrate_storage
             ;;
         "help"|"-h"|"--help"|"")
             show_usage
