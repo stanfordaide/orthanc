@@ -31,8 +31,8 @@ generate_password() {
 # Function to check if running as root
 check_root() {
     if [[ $EUID -eq 0 ]]; then
-        echo -e "${RED}❌ This script should not be run as root${NC}"
-        exit 1
+        echo -e "${YELLOW}⚠️  Running as root - please ensure proper permissions${NC}"
+        # Don't exit, just warn
     fi
 }
 
@@ -58,7 +58,7 @@ validate_data_path() {
     if ! touch "$test_file" 2>/dev/null; then
         echo -e "${RED}❌ No write permission to: $ORTHANC_DIR${NC}"
         echo -e "${YELLOW}💡 Try:${NC}"
-        echo -e "   • sudo chown -R $USER:$USER $ORTHANC_DIR"
+        echo -e "   • chown -R \$USER:\$USER $ORTHANC_DIR"
         echo -e "   • Check network drive mount permissions"
         exit 1
     fi
@@ -66,8 +66,8 @@ validate_data_path() {
     
     # Check available space (warn if less than 10GB)
     local available_space
-    available_space=$(df -BG "$ORTHANC_DIR" | awk 'NR==2 {print $4}' | tr -d 'G')
-    if [[ $available_space -lt 10 ]]; then
+    available_space=$(df -BG "$ORTHANC_DIR" 2>/dev/null | awk 'NR==2 {print \$4}' | tr -d 'G' || echo "0")
+    if [[ $available_space -lt 10 && $available_space -ne 0 ]]; then
         echo -e "${YELLOW}⚠️  Warning: Less than 10GB available space (${available_space}GB)${NC}"
         echo -e "${YELLOW}   Medical imaging requires significant storage space${NC}"
         read -p "Continue anyway? (y/N): " -n 1 -r
@@ -121,15 +121,20 @@ create_directories() {
     if mountpoint -q "$ORTHANC_DIR" 2>/dev/null || [[ "$ORTHANC_DIR" =~ ^/mnt/ ]] || [[ "$ORTHANC_DIR" =~ ^/media/ ]]; then
         echo -e "${BLUE}🌐 Network/mounted drive detected${NC}"
         # Set permissions that work with most network filesystems
-        chmod -R 755 "$ORTHANC_DIR"
+        chmod -R 755 "$ORTHANC_DIR" 2>/dev/null || true
         
         # Create a special postgres directory with specific permissions
         # We'll use a user-accessible location for postgres data on network drives
         mkdir -p "$ORTHANC_DIR/postgres-data"
-        chmod 777 "$ORTHANC_DIR/postgres-data"  # More permissive for network drives
+        chmod 777 "$ORTHANC_DIR/postgres-data" 2>/dev/null || true  # More permissive for network drives
     else
         # Local drive - use standard permissions
-        chown -R $USER:$USER "$ORTHANC_DIR"
+        if [[ $EUID -eq 0 ]]; then
+            # Running as root, set proper ownership
+            chown -R 1000:1000 "$ORTHANC_DIR" 2>/dev/null || true
+        else
+            chown -R $USER:$USER "$ORTHANC_DIR" 2>/dev/null || true
+        fi
         # Note: PostgreSQL container will handle its own permissions
     fi
     
@@ -149,18 +154,17 @@ setup_database_password() {
     
     echo -e "${YELLOW}🔧 Updating configuration files...${NC}"
     
-    # Create a temporary docker-compose.yml with updated paths
-    local temp_compose="$ORTHANC_DIR/docker-compose.yml"
-    
-    # Update docker-compose.yml - replace PostgreSQL password and paths
+    # Update docker-compose.yml - replace PostgreSQL password and ALL possible device paths
     sed -e "s/POSTGRES_PASSWORD=ChangePasswordHere/POSTGRES_PASSWORD=$DB_PWD/" \
         -e "s|device: '/opt/orthanc/orthanc-storage'|device: '$ORTHANC_DIR/orthanc-storage'|g" \
         -e "s|device: '/opt/orthanc/postgres-data'|device: '$ORTHANC_DIR/postgres-data'|g" \
         -e "s|device: '/opt/mercure/addons/orthanc/orthanc-storage'|device: '$ORTHANC_DIR/orthanc-storage'|g" \
         -e "s|device: '/opt/mercure/addons/orthanc/postgres-data'|device: '$ORTHANC_DIR/postgres-data'|g" \
+        -e "s|device: '/opt/projects/orthanc/orthanc-storage'|device: '$ORTHANC_DIR/orthanc-storage'|g" \
+        -e "s|device: '/opt/projects/orthanc/postgres-data'|device: '$ORTHANC_DIR/postgres-data'|g" \
         "$SCRIPT_DIR/docker-compose.yml" > "$ORTHANC_DIR/docker-compose.yml"
     
-    # Update orthanc.json - replace PostgreSQL password
+    # Update orthanc.json - replace PostgreSQL password and save to config directory
     sed -e "s/ChangePasswordHere/$DB_PWD/" \
         "$SCRIPT_DIR/orthanc.json" > "$ORTHANC_DIR/config/orthanc.json"
     
@@ -177,19 +181,14 @@ copy_files() {
     # Copy lua scripts
     cp -r "$SCRIPT_DIR/lua-scripts" "$ORTHANC_DIR/config/"
     
-    # Update the docker-compose.yml to use the config subdirectory
-    sed -i -e "s|./orthanc.json|./config/orthanc.json|g" \
-           -e "s|./nginx.conf|./config/nginx.conf|g" \
-           -e "s|./lua-scripts|./config/lua-scripts|g" \
-           "$ORTHANC_DIR/docker-compose.yml" 2>/dev/null || {
-        # If sed -i doesn't work (some network filesystems), use temp file
-        local temp_file=$(mktemp)
-        sed -e "s|./orthanc.json|./config/orthanc.json|g" \
-            -e "s|./nginx.conf|./config/nginx.conf|g" \
-            -e "s|./lua-scripts|./config/lua-scripts|g" \
-            "$ORTHANC_DIR/docker-compose.yml" > "$temp_file"
-        mv "$temp_file" "$ORTHANC_DIR/docker-compose.yml"
-    }
+    # Update the docker-compose.yml to use the config subdirectory and fix file paths
+    local temp_file=$(mktemp)
+    sed -e "s|file: orthanc.json|file: config/orthanc.json|g" \
+        -e "s|./orthanc.json|./config/orthanc.json|g" \
+        -e "s|./nginx.conf|./config/nginx.conf|g" \
+        -e "s|./lua-scripts|./config/lua-scripts|g" \
+        "$ORTHANC_DIR/docker-compose.yml" > "$temp_file"
+    mv "$temp_file" "$ORTHANC_DIR/docker-compose.yml"
     
     echo -e "${GREEN}✅ Configuration files copied${NC}"
 }
@@ -202,6 +201,10 @@ start_services() {
     
     # For network drives, we might need to set COMPOSE_CONVERT_WINDOWS_PATHS
     export COMPOSE_CONVERT_WINDOWS_PATHS=1
+    
+    echo -e "${BLUE}Debug: Working directory: $(pwd)${NC}"
+    echo -e "${BLUE}Debug: Files in directory:${NC}"
+    ls -la "$ORTHANC_DIR/"
     
     docker-compose up -d
     
@@ -223,12 +226,30 @@ verify_installation() {
     if docker-compose ps | grep -q "Up"; then
         echo -e "${GREEN}✅ Containers are running${NC}"
         
+        # Verify volume mounts are correct
+        echo -e "${YELLOW}🔍 Checking volume mounts...${NC}"
+        local storage_mount=$(docker volume inspect "$(basename $ORTHANC_DIR)_orthanc-storage" 2>/dev/null | grep -o '"Mountpoint": "[^"]*"' | cut -d'"' -f4 || echo "")
+        local db_mount=$(docker volume inspect "$(basename $ORTHANC_DIR)_orthanc-db-data" 2>/dev/null | grep -o '"Mountpoint": "[^"]*"' | cut -d'"' -f4 || echo "")
+        
+        if [[ "$storage_mount" == "$ORTHANC_DIR/orthanc-storage" ]]; then
+            echo -e "${GREEN}✅ Storage volume correctly mounted to: $storage_mount${NC}"
+        else
+            echo -e "${YELLOW}⚠️  Storage volume mount: $storage_mount${NC}"
+        fi
+        
+        if [[ "$db_mount" == "$ORTHANC_DIR/postgres-data" ]]; then
+            echo -e "${GREEN}✅ Database volume correctly mounted to: $db_mount${NC}"
+        else
+            echo -e "${YELLOW}⚠️  Database volume mount: $db_mount${NC}"
+        fi
+        
         # Test Orthanc connectivity
         echo -e "${YELLOW}🏥 Testing Orthanc connectivity...${NC}"
-        if curl -s -o /dev/null -w "%{http_code}" http://localhost:8042 | grep -q "200\|302"; then
+        local http_code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8042 2>/dev/null || echo "000")
+        if [[ "$http_code" == "200" || "$http_code" == "302" ]]; then
             echo -e "${GREEN}✅ Orthanc is accessible${NC}"
         else
-            echo -e "${YELLOW}⚠️  Orthanc may still be starting up...${NC}"
+            echo -e "${YELLOW}⚠️  Orthanc may still be starting up (HTTP: $http_code)...${NC}"
         fi
         
         # Test database connectivity
@@ -238,13 +259,23 @@ verify_installation() {
         else
             echo -e "${YELLOW}⚠️  Database may still be initializing...${NC}"
         fi
+        
+        # Check actual data directory contents
+        echo -e "${YELLOW}📁 Checking data directories...${NC}"
+        if [[ -d "$ORTHANC_DIR/orthanc-storage" ]]; then
+            echo -e "${GREEN}✅ Orthanc storage directory exists${NC}"
+        fi
+        if [[ -d "$ORTHANC_DIR/postgres-data" ]]; then
+            echo -e "${GREEN}✅ PostgreSQL data directory exists${NC}"
+        fi
+        
     else
         echo -e "${RED}❌ Some containers failed to start${NC}"
         docker-compose logs
     fi
 }
 
-# Function to display completion message
+# Function to display completion message (continued)
 show_completion() {
     echo -e "\n${GREEN}🎉 Orthanc installation completed successfully!${NC}"
     echo -e "\n${YELLOW}📋 Service Information:${NC}"
@@ -255,6 +286,7 @@ show_completion() {
     echo -e "\n${YELLOW}🔐 Security Information:${NC}"
     echo -e "  • Database password stored in: $ORTHANC_DIR/.db_password"
     echo -e "\n${YELLOW}📁 Installation Directory:${NC}"
+    echo -e "  • Main: $ORTHANC_DIR"
     echo -e "  • Config: $ORTHANC_DIR/config/"
     echo -e "  • Data Storage: $ORTHANC_DIR/orthanc-storage/"
     echo -e "  • Database: $ORTHANC_DIR/postgres-data/"
@@ -274,6 +306,12 @@ show_completion() {
         echo -e "  • Consider adding to /etc/fstab for persistent mounting"
         echo -e "  • Monitor network connectivity for optimal performance"
     fi
+    
+    echo -e "\n${BLUE}🔍 Verification Commands:${NC}"
+    echo -e "  • Check volumes: docker volume ls | grep $(basename $ORTHANC_DIR)"
+    echo -e "  • Check storage: ls -la $ORTHANC_DIR/orthanc-storage/"
+    echo -e "  • Check database: ls -la $ORTHANC_DIR/postgres-data/"
+    echo -e "  • View password: cat $ORTHANC_DIR/.db_password"
 }
 
 # Function to show usage
@@ -286,6 +324,7 @@ show_usage() {
     echo -e "  $0 /mnt/nas/orthanc         # Use network drive"
     echo -e "  $0 /home/user/orthanc-data  # Use user directory"
     echo -e "  $0 /media/external/orthanc  # Use external drive"
+    echo -e "  $0 /opt/orthanc-test/data   # Use custom path"
 }
 
 # Main execution
@@ -299,7 +338,7 @@ main() {
     echo -e "${GREEN}Starting Orthanc installation from: $SCRIPT_DIR${NC}"
     echo -e "${BLUE}Target data directory: $ORTHANC_DIR${NC}"
     
-    # check_root
+    check_root
     validate_data_path
     check_files
     create_directories
