@@ -240,14 +240,14 @@ start_services() {
     echo -e "${BLUE}Debug: Files in directory:${NC}"
     ls -la "$LOCAL_INSTALL_DIR/"
     
-    docker-compose up -d
+    docker compose up -d
     
     echo -e "${GREEN}✅ Services started${NC}"
     echo -e "${YELLOW}⏳ Waiting for services to initialize...${NC}"
     sleep 15
     
     # Check service status
-    docker-compose ps
+    docker compose ps
 }
 
 # Function to verify installation
@@ -257,7 +257,7 @@ verify_installation() {
     cd "$LOCAL_INSTALL_DIR"
     
     # Check if containers are running
-    if docker-compose ps | grep -q "Up"; then
+    if docker compose ps | grep -q "Up"; then
         echo -e "${GREEN}✅ Containers are running${NC}"
         
         # Test Orthanc connectivity
@@ -271,7 +271,7 @@ verify_installation() {
         
         # Test database connectivity
         echo -e "${YELLOW}🗄️  Checking database logs...${NC}"
-        if docker-compose logs orthanc-db | grep -q "database system is ready"; then
+        if docker compose logs orthanc-db | grep -q "database system is ready"; then
             echo -e "${GREEN}✅ Database is ready${NC}"
         else
             echo -e "${YELLOW}⚠️  Database may still be initializing...${NC}"
@@ -288,7 +288,7 @@ verify_installation() {
         
     else
         echo -e "${RED}❌ Some containers failed to start${NC}"
-        docker-compose logs
+        docker compose logs
     fi
 }
 
