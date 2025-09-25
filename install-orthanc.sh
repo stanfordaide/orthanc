@@ -113,7 +113,7 @@ validate_local_install_path() {
 check_files() {
     echo -e "${YELLOW}📋 Checking required files...${NC}"
     
-    local required_files=("docker-compose.yml" "orthanc.json" "nginx.conf")
+    local required_files=("docker-compose.yml" "orthanc.json" "nginx.conf" "orthanc-manager.sh")
     local missing_files=()
     
     for file in "${required_files[@]}"; do
@@ -210,6 +210,9 @@ copy_files() {
     # Copy lua scripts to root (docker-compose expects ./lua-scripts)
     cp -r "$SCRIPT_DIR/lua-scripts" "$LOCAL_INSTALL_DIR/"
     
+    # Copy orthanc-manager.sh to the local installation directory
+    cp "$SCRIPT_DIR/orthanc-manager.sh" "$LOCAL_INSTALL_DIR/"
+    
     echo -e "${GREEN}✅ Configuration files copied${NC}"
 }
 
@@ -298,6 +301,7 @@ show_completion() {
     echo -e "  • Stop: cd $LOCAL_INSTALL_DIR && docker-compose down"
     echo -e "  • Logs: cd $LOCAL_INSTALL_DIR && docker-compose logs -f"
     echo -e "  • Status: cd $LOCAL_INSTALL_DIR && docker-compose ps"
+    echo -e "  • Manage Orthanc: cd $LOCAL_INSTALL_DIR && ./orthanc-manager.sh [command]"
     echo -e "\n${YELLOW}📝 Next Steps:${NC}"
     echo -e "  • Access Orthanc at http://localhost:8042 to upload DICOM files"
     echo -e "  • Check logs if services don't respond immediately"
