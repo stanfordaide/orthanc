@@ -50,6 +50,52 @@ function hasStanfordAIDEOutput(instances)
     return false
 end
 
+-- Helper function to find the instance with the highest matrix size
+function findHighestResolutionInstance(instances)
+    local bestInstance = nil
+    local maxMatrixSize = 0
+    
+    print('   Analyzing matrix sizes across ' .. #instances .. ' instances:')
+    
+    for i, instance in pairs(instances) do
+        local instanceTags = ParseJson(RestApiGet('/instances/' .. instance['ID'] .. '/tags?simplify'))
+        if instanceTags then
+            -- Get matrix dimensions
+            local rows = tonumber(instanceTags['Rows'] or '0')
+            local columns = tonumber(instanceTags['Columns'] or '0')
+            local matrixSize = rows * columns
+            
+            -- Get additional info for logging
+            local seriesDescription = instanceTags['SeriesDescription'] or 'Unknown'
+            local instanceNumber = instanceTags['InstanceNumber'] or 'Unknown'
+            
+            print('      Instance ' .. i .. ': ' .. rows .. 'x' .. columns .. ' (' .. matrixSize .. ' pixels) - ' .. 
+                  seriesDescription .. ' [#' .. instanceNumber .. ']')
+            
+            -- Update best instance if this one has higher resolution
+            if matrixSize > maxMatrixSize then
+                maxMatrixSize = matrixSize
+                bestInstance = instance
+                print('         ^ New highest resolution found')
+            end
+        else
+            print('      Instance ' .. i .. ': Could not retrieve tags')
+        end
+    end
+    
+    if bestInstance then
+        local bestTags = ParseJson(RestApiGet('/instances/' .. bestInstance['ID'] .. '/tags?simplify'))
+        local bestRows = bestTags['Rows'] or '0'
+        local bestColumns = bestTags['Columns'] or '0'
+        local bestSeries = bestTags['SeriesDescription'] or 'Unknown'
+        print('   Selected highest resolution: ' .. bestRows .. 'x' .. bestColumns .. ' (' .. maxMatrixSize .. ' pixels) - ' .. bestSeries)
+    else
+        print('   Warning: No valid instance found with matrix dimensions')
+    end
+    
+    return bestInstance
+end
+
 function OnStableStudy(studyId, tags, metadata, origin)
     -- Avoid processing our own modifications
     if origin and origin["RequestOrigin"] == "Lua" then
@@ -84,28 +130,23 @@ function OnStableStudy(studyId, tags, metadata, origin)
         print('   Original Description: ' .. studyDescription)
         print('   Found ' .. #instances .. ' instances in study')
         
-        -- Process all instances
-        local success = true
-        local lastJob = nil
+        -- Find the instance with the highest matrix size
+        local bestInstance = findHighestResolutionInstance(instances)
         
-        for i, instance in pairs(instances) do
-            local job = SendToModality(instance['ID'], 'MERCURE')
+        if bestInstance then
+            -- Send only the highest resolution instance
+            local job = SendToModality(bestInstance['ID'], 'MERCURE')
             if job then
-                print('   ✓ Instance ' .. i .. ' queued for MERCURE (Job: ' .. job .. ')')
-                lastJob = job
+                print('   ✓ Highest resolution instance queued for MERCURE (Job: ' .. job .. ')')
+                print('AUTO-FORWARD: Bone length study (highest res) forwarded to MERCURE - Patient: ' .. 
+                          patientName .. ', Study: ' .. studyId .. ', Job: ' .. job)
             else
-                print('   ✗ Failed to queue instance ' .. i)
-                success = false
+                print('   ✗ Failed to queue highest resolution instance')
+                print('AUTO-FORWARD FAILED: Could not send highest resolution instance - Study: ' .. studyId)
             end
-        end
-        
-        if success then
-            print('   ✓ All instances queued for MERCURE')
-            print('AUTO-FORWARD: Bone length study forwarded to MERCURE - Patient: ' .. 
-                      patientName .. ', Study: ' .. studyId .. ', Last Job: ' .. lastJob)
         else
-            print('   ⚠ Failed to queue some instances')
-            print('AUTO-FORWARD PARTIAL: Some instances failed to send - Study: ' .. studyId)
+            print('   ⚠ No valid instance found with matrix dimensions')
+            print('AUTO-FORWARD FAILED: No valid high-resolution instance found - Study: ' .. studyId)
         end
     end
 end
