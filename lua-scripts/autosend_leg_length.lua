@@ -61,10 +61,10 @@ function OnStableStudy(studyId, tags, metadata, origin)
     
     -- Convert to uppercase for case-insensitive comparison
     local normalizedDescription = string.upper(studyDescription)
-    local targetDescription = string.upper('LPCH XR EXTREMITY BILATERAL BONE LENGTH')
     
-    -- First check if this is a bone length study
-    if normalizedDescription == targetDescription then
+    -- Check if this is a bone length study (relaxed condition)
+    -- Matches either "XR EXTREMITY BILATERAL BONE LENGTH" or "LPCH XR EXTREMITY BILATERAL BONE LENGTH"
+    if string.find(normalizedDescription, 'XR EXTREMITY BILATERAL BONE LENGTH') then
         -- Get all instances in the study
         local instances = ParseJson(RestApiGet('/studies/' .. studyId .. '/instances'))
         
