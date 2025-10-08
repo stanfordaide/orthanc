@@ -97,6 +97,12 @@ function findHighestResolutionInstance(instances)
 end
 
 function OnStableStudy(studyId, tags, metadata, origin)
+
+    print('OnStableStudy called for studyId: ' .. studyId)
+    print('Tags: ' .. table.show(tags))
+    print('Metadata: ' .. table.show(metadata))
+    print('Origin: ' .. table.show(origin))
+
     -- Avoid processing our own modifications
     if origin and origin["RequestOrigin"] == "Lua" then
         print('Skipping processing of Lua-originated study')
@@ -110,7 +116,7 @@ function OnStableStudy(studyId, tags, metadata, origin)
     
     -- Check if this is a bone length study (relaxed condition)
     -- Matches either "XR EXTREMITY BILATERAL BONE LENGTH" or "LPCH XR EXTREMITY BILATERAL BONE LENGTH"
-    if string.find(normalizedDescription, 'XR EXTREMITY BILATERAL BONE LENGTH') then
+    if string.find(normalizedDescription, 'EXTREMITY BILATERAL BONE LENGTH') then
         -- Get all instances in the study
         local instances = ParseJson(RestApiGet('/studies/' .. studyId .. '/instances'))
         
