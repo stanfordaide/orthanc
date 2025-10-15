@@ -1,14 +1,44 @@
 #!/bin/bash
-echo "🧹 Cleaning up and setting up NFS..."
+echo "🧹 Cleaning up any existing NFS setup and installing fresh..."
 
-# Cleanup previous work
+# Stop NFS services first
+sudo systemctl stop nfs-server 2>/dev/null || true
+sudo systemctl disable nfs-server 2>/dev/null || true
+sudo systemctl stop rpcbind 2>/dev/null || true
+
+# Unmount any existing NFS mounts
 sudo umount /nfs-share/data 2>/dev/null || true
 sudo umount /srv/nfs/orthanc 2>/dev/null || true
+
+# Remove from configuration files
+sudo sed -i '/nfs-share/d' /etc/fstab 2>/dev/null || true
+sudo sed -i '/srv\/nfs\/orthanc/d' /etc/fstab 2>/dev/null || true
 sudo sed -i '/srv\/nfs\/orthanc/d' /etc/exports 2>/dev/null || true
+
+# Clear NFS exports
+sudo exportfs -ua 2>/dev/null || true
 sudo exportfs -ra 2>/dev/null || true
-sudo rm -rf /nfs-share /srv/nfs/orthanc /opt/network-storage
-sudo systemctl stop nfs-server 2>/dev/null || true
+
+# Remove directories
+sudo rm -rf /nfs-share
+sudo rm -rf /srv/nfs/orthanc
+sudo rm -rf /srv/nfs
+sudo rm -rf /opt/network-storage
+
+# Remove firewall rules
+sudo firewall-cmd --remove-service=nfs --permanent 2>/dev/null || true
+sudo firewall-cmd --remove-service=rpc-bind --permanent 2>/dev/null || true
+sudo firewall-cmd --reload 2>/dev/null || true
+
+# Clean SELinux contexts
+sudo semanage fcontext -d "/nfs-share/data(/.*)?" 2>/dev/null || true
+sudo semanage fcontext -d "/srv/nfs/orthanc(/.*)?" 2>/dev/null || true
+sudo setsebool -P use_nfs_home_dirs off 2>/dev/null || true
+
+# Remove groups
 sudo groupdel nfs-users 2>/dev/null || true
+
+echo "✅ Cleanup complete. Setting up fresh NFS..."
 
 # Install NFS utilities
 sudo dnf install -y nfs-utils
