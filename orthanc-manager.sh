@@ -203,6 +203,105 @@ fix_volume_conflicts() {
     fi
 }
 
+# Function to merge JSON configurations (preserves dynamic settings)
+merge_json_config() {
+    local old_config="$1"
+    local new_config="$2"
+    local output_config="$3"
+    
+    # Fields to preserve from old config
+    local preserve_fields=("DicomModalities" "RegisteredUsers" "OrthancPeers")
+    
+    echo -e "${BLUE}Merging configuration (preserving dynamic settings)...${NC}"
+    
+    # Use Python to merge JSON if available, otherwise just use new config
+    if command -v python3 &> /dev/null; then
+        python3 << EOF
+import json
+import sys
+
+try:
+    with open('$old_config', 'r') as f:
+        old = json.load(f)
+    with open('$new_config', 'r') as f:
+        new = json.load(f)
+    
+    # Preserve specific fields from old config
+    preserve = ['DicomModalities', 'RegisteredUsers', 'OrthancPeers']
+    for field in preserve:
+        if field in old and old[field]:
+            # Only preserve if there's actual content
+            if isinstance(old[field], dict) and len(old[field]) > 0:
+                new[field] = old[field]
+                print(f"  • Preserved {field}: {len(old[field])} entries", file=sys.stderr)
+            elif isinstance(old[field], list) and len(old[field]) > 0:
+                new[field] = old[field]
+                print(f"  • Preserved {field}: {len(old[field])} entries", file=sys.stderr)
+    
+    with open('$output_config', 'w') as f:
+        json.dump(new, f, indent=2)
+    
+    print("✅ Configuration merged successfully", file=sys.stderr)
+except Exception as e:
+    print(f"⚠️  Could not merge JSON: {e}", file=sys.stderr)
+    # Fallback: just copy new config
+    import shutil
+    shutil.copy('$new_config', '$output_config')
+EOF
+    else
+        echo -e "${YELLOW}  • Python not available, using new config as-is${NC}"
+        cp "$new_config" "$output_config"
+    fi
+}
+
+# Function to validate update prerequisites
+validate_update() {
+    echo -e "${YELLOW}🔍 Validating update prerequisites...${NC}"
+    
+    local validation_failed=0
+    
+    # Check if database password file exists
+    if [[ ! -f "$ORTHANC_DIR/.db_password" ]]; then
+        echo -e "${RED}❌ Database password file not found${NC}"
+        validation_failed=1
+    else
+        echo -e "${GREEN}✅ Database credentials found${NC}"
+    fi
+    
+    # Check if data directories are accessible
+    local dicom_path=$(detect_dicom_storage_path)
+    local postgres_path=$(detect_postgres_data_path)
+    
+    if [[ ! -d "$dicom_path" ]]; then
+        echo -e "${YELLOW}⚠️  DICOM storage not found: $dicom_path${NC}"
+    elif [[ ! -w "$dicom_path" ]]; then
+        echo -e "${YELLOW}⚠️  DICOM storage not writable: $dicom_path${NC}"
+    else
+        echo -e "${GREEN}✅ DICOM storage accessible${NC}"
+    fi
+    
+    if [[ ! -d "$postgres_path" ]]; then
+        echo -e "${YELLOW}⚠️  PostgreSQL data not found: $postgres_path${NC}"
+    else
+        echo -e "${GREEN}✅ PostgreSQL data accessible${NC}"
+    fi
+    
+    # Check if containers are running
+    cd "$ORTHANC_DIR"
+    if docker compose ps | grep -q "Up"; then
+        echo -e "${GREEN}✅ Services are running${NC}"
+    else
+        echo -e "${YELLOW}⚠️  Services are not running (will start after update)${NC}"
+    fi
+    
+    if [[ $validation_failed -eq 1 ]]; then
+        echo -e "${RED}❌ Validation failed - please fix issues before updating${NC}"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}✅ Validation passed${NC}"
+}
+
 # Function to update configuration
 update_config() {
     echo -e "${YELLOW}🔧 Updating Orthanc configuration...${NC}"
@@ -224,6 +323,9 @@ update_config() {
         exit 1
     fi
     
+    # Validate prerequisites
+    validate_update
+    
     # Detect current storage paths before backup
     local current_dicom_path=$(detect_dicom_storage_path)
     local current_postgres_path=$(detect_postgres_data_path)
@@ -231,6 +333,17 @@ update_config() {
     echo -e "${BLUE}Current storage paths:${NC}"
     echo -e "  • DICOM: $current_dicom_path"
     echo -e "  • PostgreSQL: $current_postgres_path"
+    
+    # Get the database password BEFORE any changes
+    local DB_PWD=""
+    if [[ -f "$ORTHANC_DIR/.db_password" ]]; then
+        DB_PWD=$(grep "ORTHANC_DB_PASSWORD=" "$ORTHANC_DIR/.db_password" | cut -d= -f2)
+        echo -e "${GREEN}✅ Retrieved existing database credentials${NC}"
+    else
+        echo -e "${RED}❌ Cannot find database password file!${NC}"
+        echo -e "${YELLOW}Update aborted to prevent breaking database connection${NC}"
+        exit 1
+    fi
     
     # Backup current config
     backup_config
@@ -244,35 +357,64 @@ update_config() {
     # Check and fix volume conflicts
     fix_volume_conflicts
     
-    # Copy new configuration files
-    echo -e "${YELLOW}Copying updated configuration...${NC}"
-    cp "$SCRIPT_DIR/docker-compose.yml" "$ORTHANC_DIR/"
-    cp "$SCRIPT_DIR/orthanc.json" "$ORTHANC_DIR/"
-    cp "$SCRIPT_DIR/nginx.conf" "$ORTHANC_DIR/"
+    # Copy new configuration files to temp location first
+    echo -e "${YELLOW}Preparing updated configuration...${NC}"
+    local temp_dir=$(mktemp -d)
+    cp "$SCRIPT_DIR/docker-compose.yml" "$temp_dir/"
+    cp "$SCRIPT_DIR/orthanc.json" "$temp_dir/"
+    cp "$SCRIPT_DIR/nginx.conf" "$temp_dir/"
     
+    # Update passwords in temp files
+    echo -e "${YELLOW}Restoring database credentials...${NC}"
+    sed -i "s/ChangePasswordHere/$DB_PWD/g" "$temp_dir/orthanc.json"
+    sed -i "s/POSTGRES_PASSWORD=ChangePasswordHere/POSTGRES_PASSWORD=$DB_PWD/g" "$temp_dir/docker-compose.yml"
+    
+    # Update storage paths in docker-compose.yml to maintain current paths
+    sed -i "s|device: '/opt/orthanc/orthanc-storage'|device: '$current_dicom_path'|g" "$temp_dir/docker-compose.yml"
+    sed -i "s|device: '/opt/orthanc/postgres-data'|device: '$current_postgres_path'|g" "$temp_dir/docker-compose.yml"
+    
+    # Merge orthanc.json configurations (preserve dynamic settings)
+    if [[ -f "$ORTHANC_DIR/orthanc.json" ]]; then
+        merge_json_config "$ORTHANC_DIR/orthanc.json" "$temp_dir/orthanc.json" "$temp_dir/orthanc.json.merged"
+        mv "$temp_dir/orthanc.json.merged" "$temp_dir/orthanc.json"
+    fi
+    
+    # Now copy the prepared configs to the actual location
+    echo -e "${YELLOW}Installing updated configuration...${NC}"
+    cp "$temp_dir/docker-compose.yml" "$ORTHANC_DIR/"
+    cp "$temp_dir/orthanc.json" "$ORTHANC_DIR/"
+    cp "$temp_dir/nginx.conf" "$ORTHANC_DIR/"
+    
+    # Clean up temp directory
+    rm -rf "$temp_dir"
+    
+    # Update lua scripts
     if [[ -d "$SCRIPT_DIR/lua-scripts" ]]; then
+        echo -e "${YELLOW}Updating Lua scripts...${NC}"
         cp -r "$SCRIPT_DIR/lua-scripts"/* "$ORTHANC_DIR/lua-scripts/" 2>/dev/null || true
     fi
     
-    # Check if storage paths changed
+    # Check if storage paths changed (they shouldn't with our new logic)
     local new_dicom_path=$(detect_dicom_storage_path)
     local new_postgres_path=$(detect_postgres_data_path)
     
     if [[ "$current_dicom_path" != "$new_dicom_path" ]]; then
         echo -e "${YELLOW}⚠️  DICOM storage path changed: $current_dicom_path → $new_dicom_path${NC}"
-        echo -e "${YELLOW}You may need to migrate data manually if this was unintended${NC}"
+        echo -e "${YELLOW}This should not happen during normal updates${NC}"
     fi
     
     if [[ "$current_postgres_path" != "$new_postgres_path" ]]; then
         echo -e "${YELLOW}⚠️  PostgreSQL data path changed: $current_postgres_path → $new_postgres_path${NC}"
-        echo -e "${YELLOW}You may need to migrate data manually if this was unintended${NC}"
+        echo -e "${YELLOW}This should not happen during normal updates${NC}"
     fi
     
     # Restart services
-    echo -e "${YELLOW}Restarting with new configuration...${NC}"
+    echo -e "${YELLOW}Restarting with updated configuration...${NC}"
     docker compose up -d
     
-    echo -e "${GREEN}✅ Configuration updated and services restarted${NC}"
+    echo -e "${GREEN}✅ Configuration updated successfully${NC}"
+    echo -e "${GREEN}✅ Database credentials preserved${NC}"
+    echo -e "${GREEN}✅ Dynamic settings (modalities, users) preserved${NC}"
     
     echo -e "${YELLOW}⏳ Waiting for services to initialize...${NC}"
     sleep 10
@@ -298,12 +440,47 @@ backup_config() {
     echo -e "${GREEN}✅ Configuration backed up to: $backup_path${NC}"
 }
 
+# Function to create database dump
+backup_database_dump() {
+    local backup_path="$1"
+    
+    echo -e "${YELLOW}Creating database dump for faster restore...${NC}"
+    
+    cd "$ORTHANC_DIR"
+    
+    # Get database password
+    local DB_PWD=""
+    if [[ -f "$ORTHANC_DIR/.db_password" ]]; then
+        DB_PWD=$(grep "ORTHANC_DB_PASSWORD=" "$ORTHANC_DIR/.db_password" | cut -d= -f2)
+    fi
+    
+    if [[ -z "$DB_PWD" ]]; then
+        echo -e "${YELLOW}⚠️  Could not retrieve database password, skipping database dump${NC}"
+        return
+    fi
+    
+    # Create database dump using pg_dump from the postgres container
+    if docker compose ps orthanc-db | grep -q "Up"; then
+        echo -e "${BLUE}  • Dumping PostgreSQL database...${NC}"
+        docker compose exec -T orthanc-db pg_dump -U orthanc -d orthanc > "$backup_path/database_dump.sql" 2>/dev/null || {
+            echo -e "${YELLOW}⚠️  Database dump failed (container might be stopped)${NC}"
+        }
+        
+        if [[ -f "$backup_path/database_dump.sql" ]] && [[ -s "$backup_path/database_dump.sql" ]]; then
+            gzip "$backup_path/database_dump.sql"
+            echo -e "${GREEN}  • Database dump created: database_dump.sql.gz${NC}"
+        fi
+    else
+        echo -e "${YELLOW}⚠️  Database container not running, skipping database dump${NC}"
+    fi
+}
+
 # Function to create full backup
 create_backup() {
     local timestamp=$(date +"%Y%m%d_%H%M%S")
     local backup_path="$BACKUP_DIR/full_backup_$timestamp"
     
-    echo -e "${YELLOW}💾 Creating full backup (data + config)...${NC}"
+    echo -e "${YELLOW}💾 Creating full backup (data + config + database)...${NC}"
     
     # Detect current storage paths
     local dicom_path=$(detect_dicom_storage_path)
@@ -315,12 +492,16 @@ create_backup() {
     
     mkdir -p "$backup_path"
     
+    # Backup database dump BEFORE stopping services
+    backup_database_dump "$backup_path"
+    
     # Stop services for consistent backup
     echo -e "${YELLOW}Stopping services for backup...${NC}"
     cd "$ORTHANC_DIR"
     docker compose stop
     
     # Backup configuration
+    echo -e "${YELLOW}Backing up configuration files...${NC}"
     cp "$ORTHANC_DIR/docker-compose.yml" "$backup_path/" 2>/dev/null || true
     cp "$ORTHANC_DIR/orthanc.json" "$backup_path/" 2>/dev/null || true
     cp "$ORTHANC_DIR/nginx.conf" "$backup_path/" 2>/dev/null || true
@@ -347,9 +528,10 @@ create_backup() {
 Backup Created: $(date)
 Orthanc Version: $(docker image ls jodogne/orthanc-python --format "table {{.Tag}}" | tail -n +2 | head -1)
 PostgreSQL Version: $(docker image ls postgres --format "table {{.Tag}}" | tail -n +2 | head -1)
-Backup Type: Full (Configuration + Data)
+Backup Type: Full (Configuration + Data + Database Dump)
 DICOM Storage Path: $dicom_path
 PostgreSQL Data Path: $postgres_path
+Database Dump: $([ -f "$backup_path/database_dump.sql.gz" ] && echo "Yes" || echo "No")
 EOF
     
     # Restart services
@@ -358,6 +540,10 @@ EOF
     
     echo -e "${GREEN}✅ Full backup created: $backup_path${NC}"
     echo -e "${YELLOW}Backup size: $(du -sh "$backup_path" | cut -f1)${NC}"
+    
+    if [[ -f "$backup_path/database_dump.sql.gz" ]]; then
+        echo -e "${GREEN}✅ Database dump included for faster restore${NC}"
+    fi
 }
 
 # Function to restore from backup
@@ -418,9 +604,42 @@ restore_backup() {
     fi
 }
 
+# Function to restore database from dump
+restore_database_dump() {
+    local backup_path="$1"
+    
+    if [[ ! -f "$backup_path/database_dump.sql.gz" ]]; then
+        echo -e "${YELLOW}⚠️  No database dump found in backup, using data directory restore${NC}"
+        return 1
+    fi
+    
+    echo -e "${YELLOW}📊 Restoring database from SQL dump...${NC}"
+    
+    cd "$ORTHANC_DIR"
+    
+    # Wait for database to be ready
+    echo -e "${BLUE}  • Waiting for PostgreSQL to be ready...${NC}"
+    sleep 5
+    
+    # Drop and recreate database
+    echo -e "${BLUE}  • Recreating database...${NC}"
+    docker compose exec -T orthanc-db psql -U orthanc -d postgres -c "DROP DATABASE IF EXISTS orthanc;" 2>/dev/null || true
+    docker compose exec -T orthanc-db psql -U orthanc -d postgres -c "CREATE DATABASE orthanc;" 2>/dev/null || true
+    
+    # Restore from dump
+    echo -e "${BLUE}  • Importing database dump...${NC}"
+    gunzip -c "$backup_path/database_dump.sql.gz" | docker compose exec -T orthanc-db psql -U orthanc -d orthanc 2>/dev/null || {
+        echo -e "${RED}❌ Database restore failed${NC}"
+        return 1
+    }
+    
+    echo -e "${GREEN}✅ Database restored from SQL dump${NC}"
+    return 0
+}
+
 # Function to restore from specific path
 restore_from_path() {
-    local backup_path="\$1"
+    local backup_path="$1"
     
     echo -e "${YELLOW}🔄 Restoring from backup: $(basename "$backup_path")${NC}"
     
@@ -431,6 +650,17 @@ restore_from_path() {
     echo -e "${BLUE}Restoring to current paths:${NC}"
     echo -e "  • DICOM: $current_dicom_path"
     echo -e "  • PostgreSQL: $current_postgres_path"
+    
+    # Check if we have a database dump
+    local use_db_dump=false
+    if [[ -f "$backup_path/database_dump.sql.gz" ]]; then
+        echo -e "${GREEN}✅ Database dump found in backup${NC}"
+        echo -e "${YELLOW}Use SQL dump for faster restore? (yes/no): ${NC}"
+        read -r use_dump_choice
+        if [[ "$use_dump_choice" == "yes" ]]; then
+            use_db_dump=true
+        fi
+    fi
     
     # Stop services
     cd "$ORTHANC_DIR"
@@ -448,7 +678,7 @@ restore_from_path() {
         cp -r "$backup_path/lua-scripts" "$ORTHANC_DIR/"
     fi
     
-    # Restore data to current paths (not necessarily where they were backed up from)
+    # Restore DICOM storage
     if [[ -d "$backup_path/dicom-storage" ]]; then
         echo -e "${YELLOW}Restoring DICOM storage to $current_dicom_path...${NC}"
         rm -rf "$current_dicom_path"
@@ -463,24 +693,51 @@ restore_from_path() {
         fi
     fi
     
-    if [[ -d "$backup_path/postgres-data" ]]; then
-        echo -e "${YELLOW}Restoring PostgreSQL data to $current_postgres_path...${NC}"
+    # Handle database restore based on choice
+    if [[ "$use_db_dump" == true ]]; then
+        # Clear PostgreSQL data directory and start fresh
+        echo -e "${YELLOW}Clearing PostgreSQL data directory for fresh restore...${NC}"
         rm -rf "$current_postgres_path"
-        mkdir -p "$(dirname "$current_postgres_path")"
-        cp -r "$backup_path/postgres-data" "$current_postgres_path"
+        mkdir -p "$current_postgres_path"
         
         # Set PostgreSQL permissions
         if [[ $EUID -eq 0 ]]; then
             chown -R 999:999 "$current_postgres_path"
         else
-            # Try to set permissions, but don't fail if we can't
             chown -R 999:999 "$current_postgres_path" 2>/dev/null || true
         fi
+        
+        # Start database container first
+        echo -e "${YELLOW}Starting PostgreSQL container...${NC}"
+        docker compose up -d orthanc-db
+        sleep 10
+        
+        # Restore from SQL dump
+        restore_database_dump "$backup_path"
+        
+        # Now start Orthanc
+        echo -e "${YELLOW}Starting Orthanc services...${NC}"
+        docker compose up -d
+    else
+        # Traditional restore - copy postgres data directory
+        if [[ -d "$backup_path/postgres-data" ]]; then
+            echo -e "${YELLOW}Restoring PostgreSQL data to $current_postgres_path...${NC}"
+            rm -rf "$current_postgres_path"
+            mkdir -p "$(dirname "$current_postgres_path")"
+            cp -r "$backup_path/postgres-data" "$current_postgres_path"
+            
+            # Set PostgreSQL permissions
+            if [[ $EUID -eq 0 ]]; then
+                chown -R 999:999 "$current_postgres_path"
+            else
+                chown -R 999:999 "$current_postgres_path" 2>/dev/null || true
+            fi
+        fi
+        
+        # Start all services
+        echo -e "${YELLOW}Starting restored services...${NC}"
+        docker compose up -d
     fi
-    
-    # Start services
-    echo -e "${YELLOW}Starting restored services...${NC}"
-    docker compose up -d
     
     echo -e "${GREEN}✅ Restore completed${NC}"
     

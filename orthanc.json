@@ -87,7 +87,8 @@
     "DicomModalities" : {
         "MERCURE" : [ "orthanc", "172.17.0.1", 11112 ],
         "LPCHROUTER" : [ "LPCHROUTER", "10.50.133.21", 4000 ],
-        "LPCHTROUTER" : [ "LPCHTROUTER", "10.50.130.114", 4000 ]
+        "LPCHTROUTER" : [ "LPCHTROUTER", "10.50.130.114", 4000 ],
+        "MODLINK" : [ "PSRTBONEAPP01", "10.251.201.59", 104 ]
     },
     "DicomModalitiesInDatabase" : false,         // Store modalities in config vs database
     "DicomEchoChecksFind" : false,              // Test C-FIND capability during echo test

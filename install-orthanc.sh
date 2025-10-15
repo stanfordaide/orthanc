@@ -174,16 +174,81 @@ create_directories() {
     echo -e "${GREEN}✅ Directories created${NC}"
 }
 
+# Function to check if Orthanc is already installed
+check_existing_installation() {
+    if [[ -f "$LOCAL_INSTALL_DIR/.db_password" ]] && [[ -f "$LOCAL_INSTALL_DIR/docker-compose.yml" ]]; then
+        echo -e "${YELLOW}⚠️  Existing Orthanc installation detected!${NC}"
+        echo -e "${BLUE}Installation directory: $LOCAL_INSTALL_DIR${NC}"
+        echo -e ""
+        echo -e "${YELLOW}What would you like to do?${NC}"
+        echo -e "  1) Keep existing installation (recommended - use orthanc-manager.sh for updates)"
+        echo -e "  2) Reinstall (will preserve data but regenerate passwords - NOT RECOMMENDED)"
+        echo -e "  3) Cancel installation"
+        echo -e ""
+        read -p "Enter your choice (1-3): " -n 1 -r choice
+        echo
+        
+        case $choice in
+            1)
+                echo -e "${GREEN}✅ Keeping existing installation${NC}"
+                echo -e "${BLUE}💡 To update configuration, use: cd $LOCAL_INSTALL_DIR && ./orthanc-manager.sh update${NC}"
+                echo -e "${BLUE}💡 To manage services, use: cd $LOCAL_INSTALL_DIR && ./orthanc-manager.sh [start|stop|status|logs]${NC}"
+                exit 0
+                ;;
+            2)
+                echo -e "${RED}⚠️  WARNING: Reinstalling will break database connection!${NC}"
+                echo -e "${YELLOW}A new password will be generated, but the database has the old password.${NC}"
+                echo -e "${RED}Type 'REINSTALL' to confirm or anything else to cancel: ${NC}"
+                read -r confirm
+                if [[ "$confirm" != "REINSTALL" ]]; then
+                    echo -e "${GREEN}Installation cancelled${NC}"
+                    exit 0
+                fi
+                echo -e "${YELLOW}Proceeding with reinstallation...${NC}"
+                echo -e "${YELLOW}Creating backup of existing installation...${NC}"
+                
+                # Create backup before reinstalling
+                if [[ -d "$LOCAL_INSTALL_DIR" ]]; then
+                    local backup_timestamp=$(date +"%Y%m%d_%H%M%S")
+                    local backup_location="$LOCAL_INSTALL_DIR.backup_$backup_timestamp"
+                    cp -r "$LOCAL_INSTALL_DIR" "$backup_location"
+                    echo -e "${GREEN}✅ Backup created at: $backup_location${NC}"
+                fi
+                ;;
+            3|*)
+                echo -e "${GREEN}Installation cancelled${NC}"
+                exit 0
+                ;;
+        esac
+    fi
+}
+
 # Function to generate and configure PostgreSQL password
 setup_database_password() {
-    echo -e "${YELLOW}🔐 Generating secure database password...${NC}"
+    echo -e "${YELLOW}🔐 Setting up database credentials...${NC}"
     
-    # Generate new password
-    local DB_PWD=$(generate_password)
+    local DB_PWD=""
     
-    # Store password securely in local directory
-    echo "ORTHANC_DB_PASSWORD=$DB_PWD" > "$LOCAL_INSTALL_DIR/.db_password"
-    chmod 600 "$LOCAL_INSTALL_DIR/.db_password" 2>/dev/null || chmod 644 "$LOCAL_INSTALL_DIR/.db_password"
+    # Check if password already exists (upgrade scenario)
+    if [[ -f "$LOCAL_INSTALL_DIR/.db_password" ]]; then
+        DB_PWD=$(grep "ORTHANC_DB_PASSWORD=" "$LOCAL_INSTALL_DIR/.db_password" | cut -d= -f2)
+        if [[ -n "$DB_PWD" ]]; then
+            echo -e "${GREEN}✅ Using existing database credentials${NC}"
+        else
+            # File exists but is corrupted/empty
+            echo -e "${YELLOW}⚠️  Existing password file is invalid, generating new password${NC}"
+            DB_PWD=$(generate_password)
+            echo "ORTHANC_DB_PASSWORD=$DB_PWD" > "$LOCAL_INSTALL_DIR/.db_password"
+            chmod 600 "$LOCAL_INSTALL_DIR/.db_password" 2>/dev/null || chmod 644 "$LOCAL_INSTALL_DIR/.db_password"
+        fi
+    else
+        # No existing password, generate new one
+        echo -e "${YELLOW}Generating new secure database password...${NC}"
+        DB_PWD=$(generate_password)
+        echo "ORTHANC_DB_PASSWORD=$DB_PWD" > "$LOCAL_INSTALL_DIR/.db_password"
+        chmod 600 "$LOCAL_INSTALL_DIR/.db_password" 2>/dev/null || chmod 644 "$LOCAL_INSTALL_DIR/.db_password"
+        echo -e "${GREEN}✅ New database password generated${NC}"
+    fi
     
     echo -e "${YELLOW}🔧 Updating configuration files...${NC}"
     
@@ -197,7 +262,7 @@ setup_database_password() {
     sed -e "s/ChangePasswordHere/$DB_PWD/" \
         "$SCRIPT_DIR/orthanc.json" > "$LOCAL_INSTALL_DIR/orthanc.json"
     
-    echo -e "${GREEN}✅ Database password configured${NC}"
+    echo -e "${GREEN}✅ Database credentials configured${NC}"
 }
 
 # Function to copy files to installation directory
@@ -364,6 +429,7 @@ main() {
     echo -e "${BLUE}Local installation directory: $LOCAL_INSTALL_DIR${NC}"
     
     check_root
+    check_existing_installation  # Check if already installed before proceeding
     validate_dicom_storage_path
     validate_local_install_path
     check_files
