@@ -227,18 +227,64 @@ function OnStableStudy(studyId, tags, metadata, origin)
                 if success and instanceTags then
                     local seriesDescription = instanceTags['SeriesDescription'] or ''
                     local modality = instanceTags['Modality'] or ''
+                    local instanceNumber = instanceTags['InstanceNumber'] or 'Unknown'
+                    local sopInstanceUID = instanceTags['SOPInstanceUID'] or 'Unknown'
+                    
+                    print('POST-PROCESSING: Analyzing instance ' .. instance['ID'])
+                    print('   Series Description: ' .. seriesDescription)
+                    print('   Modality: ' .. modality)
+                    print('   Instance Number: ' .. instanceNumber)
+                    print('   SOP Instance UID: ' .. sopInstanceUID)
                     
                     if string.find(string.upper(seriesDescription), 'QA VISUALIZATION') then
-                        print('Routing QA Visualization to LPCHROUTER and LPCHTROUTER')
-                        SendToModality(instance['ID'], 'LPCHROUTER')
-                        SendToModality(instance['ID'], 'LPCHTROUTER')
+                        print('POST-PROCESSING: Detected QA Visualization - routing to LPCHROUTER and LPCHTROUTER')
+                        
+                        -- Route to LPCHROUTER
+                        local success1, job1 = pcall(function()
+                            return SendToModality(instance['ID'], 'LPCHROUTER')
+                        end)
+                        
+                        if success1 and job1 then
+                            print('   ✓ Successfully sent to LPCHROUTER (Job: ' .. tostring(job1) .. ')')
+                        else
+                            print('   ✗ Failed to send to LPCHROUTER: ' .. tostring(job1))
+                        end
+                        
+                        -- Route to LPCHTROUTER
+                        local success2, job2 = pcall(function()
+                            return SendToModality(instance['ID'], 'LPCHTROUTER')
+                        end)
+                        
+                        if success2 and job2 then
+                            print('   ✓ Successfully sent to LPCHTROUTER (Job: ' .. tostring(job2) .. ')')
+                        else
+                            print('   ✗ Failed to send to LPCHTROUTER: ' .. tostring(job2))
+                        end
+                        
                         markAsProcessed(instance['ID'])
+                        print('   ✓ Instance marked as processed')
+                        
                     elseif modality == 'SR' then
-                        print('Routing Structured Report to MODLINK')
-                        SendToModality(instance['ID'], 'MODLINK')
+                        print('POST-PROCESSING: Detected Structured Report - routing to MODLINK')
+                        
+                        local success1, job1 = pcall(function()
+                            return SendToModality(instance['ID'], 'MODLINK')
+                        end)
+                        
+                        if success1 and job1 then
+                            print('   ✓ Successfully sent to MODLINK (Job: ' .. tostring(job1) .. ')')
+                        else
+                            print('   ✗ Failed to send to MODLINK: ' .. tostring(job1))
+                        end
+                        
                         markAsProcessed(instance['ID'])
+                        print('   ✓ Instance marked as processed')
+                        
                     else
-                        print('Unhandled instance type: ' .. seriesDescription .. ' (Modality: ' .. modality .. ')')
+                        print('POST-PROCESSING: Unhandled instance type')
+                        print('   Series Description: ' .. seriesDescription)
+                        print('   Modality: ' .. modality)
+                        print('   Skipping routing for this instance')
                     end
                 else
                     print('Failed to retrieve tags for instance: ' .. tostring(instance['ID']))
