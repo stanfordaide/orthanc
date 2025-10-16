@@ -56,11 +56,11 @@ volumes:
     driver_opts:
       type: 'none'
       o: 'bind'
-      device: '/opt/orthanc/orthanc-storage'                 # ✅ New path
+      device: '/opt/orthanc/orthanc-storage'
   
   orthanc-db-data:
     driver: local
     driver_opts:
       type: 'none'
       o: 'bind'
-      device: '/opt/orthanc/postgres-data'                   # ✅ New path
+      device: '/opt/orthanc/postgres-data'

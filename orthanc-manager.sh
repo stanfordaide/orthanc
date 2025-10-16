@@ -19,16 +19,21 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Function to detect DICOM storage path from docker-compose.yml
+# Function to detect DICOM storage path from saved configuration
 detect_dicom_storage_path() {
     local dicom_storage_path=""
     
-    if [[ -f "$ORTHANC_DIR/docker-compose.yml" ]]; then
-        # Extract the device path for orthanc-storage volume
-        dicom_storage_path=$(grep -A 5 "orthanc-storage:" "$ORTHANC_DIR/docker-compose.yml" | grep "device:" | sed "s/.*device: *['\"]*//" | sed "s/['\"]*.*//" | head -1)
+    # First, try to read from saved .storage_paths file (most reliable)
+    if [[ -f "$ORTHANC_DIR/.storage_paths" ]]; then
+        dicom_storage_path=$(grep "^DICOM_STORAGE_PATH=" "$ORTHANC_DIR/.storage_paths" | cut -d= -f2)
     fi
     
-    # Fallback to default if not found
+    # Fallback: try to extract from docker-compose.yml
+    if [[ -z "$dicom_storage_path" ]] && [[ -f "$ORTHANC_DIR/docker-compose.yml" ]]; then
+        dicom_storage_path=$(grep -A 5 "orthanc-storage:" "$ORTHANC_DIR/docker-compose.yml" | grep "device:" | sed "s/.*device: *['\"]*//" | sed "s/['\"]*.*//" | sed "s/#.*//" | xargs | head -1)
+    fi
+    
+    # Final fallback to default if not found
     if [[ -z "$dicom_storage_path" ]]; then
         dicom_storage_path="/opt/orthanc/orthanc-storage"
     fi
@@ -36,16 +41,21 @@ detect_dicom_storage_path() {
     echo "$dicom_storage_path"
 }
 
-# Function to detect PostgreSQL data path from docker-compose.yml
+# Function to detect PostgreSQL data path from saved configuration
 detect_postgres_data_path() {
     local postgres_data_path=""
     
-    if [[ -f "$ORTHANC_DIR/docker-compose.yml" ]]; then
-        # Extract the device path for postgres data volume
-        postgres_data_path=$(grep -A 5 "orthanc-db-data:" "$ORTHANC_DIR/docker-compose.yml" | grep "device:" | sed "s/.*device: *['\"]*//" | sed "s/['\"]*.*//" | head -1)
+    # First, try to read from saved .storage_paths file (most reliable)
+    if [[ -f "$ORTHANC_DIR/.storage_paths" ]]; then
+        postgres_data_path=$(grep "^POSTGRES_DATA_PATH=" "$ORTHANC_DIR/.storage_paths" | cut -d= -f2)
     fi
     
-    # Fallback to default if not found
+    # Fallback: try to extract from docker-compose.yml
+    if [[ -z "$postgres_data_path" ]] && [[ -f "$ORTHANC_DIR/docker-compose.yml" ]]; then
+        postgres_data_path=$(grep -A 5 "orthanc-db-data:" "$ORTHANC_DIR/docker-compose.yml" | grep "device:" | sed "s/.*device: *['\"]*//" | sed "s/['\"]*.*//" | sed "s/#.*//" | xargs | head -1)
+    fi
+    
+    # Final fallback to default if not found
     if [[ -z "$postgres_data_path" ]]; then
         postgres_data_path="/opt/orthanc/postgres-data"
     fi
@@ -268,6 +278,13 @@ validate_update() {
         echo -e "${GREEN}✅ Database credentials found${NC}"
     fi
     
+    # Check if storage paths file exists
+    if [[ ! -f "$ORTHANC_DIR/.storage_paths" ]]; then
+        echo -e "${YELLOW}⚠️  Storage paths file not found (will use detected paths)${NC}"
+    else
+        echo -e "${GREEN}✅ Storage paths configuration found${NC}"
+    fi
+    
     # Check if data directories are accessible
     local dicom_path=$(detect_dicom_storage_path)
     local postgres_path=$(detect_postgres_data_path)
@@ -385,6 +402,17 @@ update_config() {
     cp "$temp_dir/orthanc.json" "$ORTHANC_DIR/"
     cp "$temp_dir/nginx.conf" "$ORTHANC_DIR/"
     
+    # Update/create .storage_paths file with current paths
+    echo -e "${YELLOW}Updating storage paths configuration...${NC}"
+    cat > "$ORTHANC_DIR/.storage_paths" << EOF
+# Orthanc Storage Paths Configuration
+# This file is used by orthanc-manager.sh to preserve storage locations during updates
+DICOM_STORAGE_PATH=$current_dicom_path
+POSTGRES_DATA_PATH=$current_postgres_path
+EOF
+    chmod 600 "$ORTHANC_DIR/.storage_paths" 2>/dev/null || chmod 644 "$ORTHANC_DIR/.storage_paths"
+    echo -e "${GREEN}✅ Storage paths preserved${NC}"
+    
     # Clean up temp directory
     rm -rf "$temp_dir"
     
@@ -435,6 +463,7 @@ backup_config() {
     cp "$ORTHANC_DIR/orthanc.json" "$backup_path/" 2>/dev/null || true
     cp "$ORTHANC_DIR/nginx.conf" "$backup_path/" 2>/dev/null || true
     cp "$ORTHANC_DIR/.db_password" "$backup_path/" 2>/dev/null || true
+    cp "$ORTHANC_DIR/.storage_paths" "$backup_path/" 2>/dev/null || true
     cp -r "$ORTHANC_DIR/lua-scripts" "$backup_path/" 2>/dev/null || true
     
     echo -e "${GREEN}✅ Configuration backed up to: $backup_path${NC}"
@@ -506,6 +535,7 @@ create_backup() {
     cp "$ORTHANC_DIR/orthanc.json" "$backup_path/" 2>/dev/null || true
     cp "$ORTHANC_DIR/nginx.conf" "$backup_path/" 2>/dev/null || true
     cp "$ORTHANC_DIR/.db_password" "$backup_path/" 2>/dev/null || true
+    cp "$ORTHANC_DIR/.storage_paths" "$backup_path/" 2>/dev/null || true
     cp -r "$ORTHANC_DIR/lua-scripts" "$backup_path/" 2>/dev/null || true
     
 # Backup data directories using detected paths
@@ -672,6 +702,7 @@ restore_from_path() {
     cp "$backup_path/orthanc.json" "$ORTHANC_DIR/" 2>/dev/null || true
     cp "$backup_path/nginx.conf" "$ORTHANC_DIR/" 2>/dev/null || true
     cp "$backup_path/.db_password" "$ORTHANC_DIR/" 2>/dev/null || true
+    cp "$backup_path/.storage_paths" "$ORTHANC_DIR/" 2>/dev/null || true
     
     if [[ -d "$backup_path/lua-scripts" ]]; then
         rm -rf "$ORTHANC_DIR/lua-scripts"

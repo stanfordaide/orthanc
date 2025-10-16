@@ -262,6 +262,17 @@ setup_database_password() {
     sed -e "s/ChangePasswordHere/$DB_PWD/" \
         "$SCRIPT_DIR/orthanc.json" > "$LOCAL_INSTALL_DIR/orthanc.json"
     
+    # Save storage paths for future updates
+    echo -e "${YELLOW}💾 Saving storage paths configuration...${NC}"
+    cat > "$LOCAL_INSTALL_DIR/.storage_paths" << EOF
+# Orthanc Storage Paths Configuration
+# This file is used by orthanc-manager.sh to preserve storage locations during updates
+DICOM_STORAGE_PATH=$DICOM_STORAGE_DIR
+POSTGRES_DATA_PATH=$LOCAL_INSTALL_DIR/postgres-data
+EOF
+    chmod 600 "$LOCAL_INSTALL_DIR/.storage_paths" 2>/dev/null || chmod 644 "$LOCAL_INSTALL_DIR/.storage_paths"
+    echo -e "${GREEN}✅ Storage paths saved to .storage_paths${NC}"
+    
     echo -e "${GREEN}✅ Database credentials configured${NC}"
 }
 
