@@ -203,146 +203,146 @@ function OnStableStudy(studyId, tags, metadata, origin)
         return
     end
 
-    -- Check if this is a result from MERCURE
-    if origin and origin["RequestOrigin"] == "Dicom" and origin["RemoteAet"] == "MERCURE" then
-        print('Received study from MERCURE, processing for routing')
+    -- Get instances for this study
+    local success, instances = pcall(function()
+        local response = RestApiGet('/studies/' .. studyId .. '/instances')
+        return response and ParseJson(response) or nil
+    end)
+    
+    if not success or not instances then
+        print('Failed to retrieve instances for study: ' .. studyId)
+        return
+    end
+
+    -- Check if study description matches bone length studies
+    local studyDescription = tags['StudyDescription'] or ''
+    local normalizedDescription = string.upper(studyDescription)
+    local isBoneLengthStudy = string.find(normalizedDescription, 'EXTREMITY BILATERAL BONE LENGTH') ~= nil
+    
+    if not isBoneLengthStudy then
+        print('Not a bone length study, ignoring')
+        return
+    end
+    
+    print('📋 Detected bone length study')
+    
+    -- Check if this study has Stanford AIDE output (already processed)
+    local hasAIDEOutput = hasStanfordAIDEOutput(instances)
+    
+    if hasAIDEOutput then
+        print('   ✓ Study contains Stanford AIDE output - routing to final destinations')
         
-        local success, instances = pcall(function()
-            local response = RestApiGet('/studies/' .. studyId .. '/instances')
-            return response and ParseJson(response) or nil
+        -- Route Stanford AIDE outputs to their destinations
+        for _, instance in pairs(instances) do
+            if instance and instance['ID'] then
+                -- Check if this instance has already been processed
+                if hasBeenProcessed(instance['ID']) then
+                    print('   ⏭ Instance ' .. instance['ID'] .. ' already processed and routed, skipping')
+                else
+                    local success, instanceTags = pcall(function()
+                        local response = RestApiGet('/instances/' .. instance['ID'] .. '/tags?simplify')
+                        return response and ParseJson(response) or nil
+                    end)
+                    
+                    if success and instanceTags then
+                        local seriesDescription = instanceTags['SeriesDescription'] or ''
+                        local modality = instanceTags['Modality'] or ''
+                        local manufacturer = instanceTags['Manufacturer'] or ''
+                        
+                        print('   Analyzing instance: ' .. instance['ID'])
+                        print('      Manufacturer: ' .. manufacturer)
+                        print('      Modality: ' .. modality)
+                        print('      Series Description: ' .. seriesDescription)
+                        
+                        -- Route QA Visualization to DICOM QA routers
+                        if string.find(string.upper(seriesDescription), 'QA VISUALIZATION') then
+                            print('   ✓ Detected QA Visualization - routing to LPCHROUTER and LPCHTROUTER')
+                            
+                            -- Route to LPCHROUTER
+                            local success1, job1 = pcall(function()
+                                return SendToModality(instance['ID'], 'LPCHROUTER')
+                            end)
+                            
+                            if success1 and job1 then
+                                print('      ✓ Successfully sent to LPCHROUTER (Job: ' .. tostring(job1) .. ')')
+                            else
+                                print('      ✗ FAILED to send to LPCHROUTER - Error: ' .. tostring(job1))
+                            end
+                            
+                            -- Route to LPCHTROUTER
+                            local success2, job2 = pcall(function()
+                                return SendToModality(instance['ID'], 'LPCHTROUTER')
+                            end)
+                            
+                            if success2 and job2 then
+                                print('      ✓ Successfully sent to LPCHTROUTER (Job: ' .. tostring(job2) .. ')')
+                            else
+                                print('      ✗ FAILED to send to LPCHTROUTER - Error: ' .. tostring(job2))
+                            end
+                            
+                            -- Mark as processed after routing
+                            markAsProcessed(instance['ID'])
+                            print('      ✓ Instance marked as processed')
+                        
+                        -- Route Structured Reports to MODLINK
+                        elseif modality == 'SR' then
+                            print('   ✓ Detected Structured Report - routing to MODLINK')
+                            
+                            local success1, job1 = pcall(function()
+                                return SendToModality(instance['ID'], 'MODLINK')
+                            end)
+                            
+                            if success1 and job1 then
+                                print('      ✓ Successfully sent to MODLINK (Job: ' .. tostring(job1) .. ')')
+                            else
+                                print('      ✗ FAILED to send to MODLINK - Error: ' .. tostring(job1))
+                            end
+                            
+                            -- Mark as processed after routing
+                            markAsProcessed(instance['ID'])
+                            print('      ✓ Instance marked as processed')
+                        else
+                            print('      ℹ Instance does not require routing (not QA Visualization or SR)')
+                        end
+                    else
+                        print('   ✗ FAILED to retrieve tags for instance: ' .. tostring(instance['ID']))
+                    end
+                end
+            end
+        end
+        
+        print('   ✓ Stanford AIDE output routing complete - NOT re-sending to MERCURE')
+        return
+    end
+    
+    -- Original study (no Stanford AIDE output yet) - send to MERCURE for processing
+    local patientName = tags['PatientName'] or 'Unknown'
+    local studyInstanceUID = tags['StudyInstanceUID'] or 'Unknown'
+    
+    print('🦴 PROCESSING NEW BONE LENGTH STUDY (No AIDE output detected)')
+    print('   Study ID: ' .. studyId)
+    print('   Patient: ' .. patientName)
+    print('   Study UID: ' .. studyInstanceUID)
+    print('   Original Description: ' .. studyDescription)
+    print('   Found ' .. getTableLength(instances) .. ' instances in study')
+    
+    local bestInstance = findHighestResolutionInstance(instances)
+    
+    if bestInstance then
+        local success, job = pcall(function()
+            return SendToModality(bestInstance['ID'], 'MERCURE')
         end)
         
-        if not success or not instances then
-            print('Failed to retrieve instances for study: ' .. studyId)
-            return
-        end
-        
-        for _, instance in pairs(instances) do
-            if not hasBeenProcessed(instance['ID']) then
-                local success, instanceTags = pcall(function()
-                    local response = RestApiGet('/instances/' .. instance['ID'] .. '/tags?simplify')
-                    return response and ParseJson(response) or nil
-                end)
-                
-                if success and instanceTags then
-                    local seriesDescription = instanceTags['SeriesDescription'] or ''
-                    local modality = instanceTags['Modality'] or ''
-                    local instanceNumber = instanceTags['InstanceNumber'] or 'Unknown'
-                    local sopInstanceUID = instanceTags['SOPInstanceUID'] or 'Unknown'
-                    
-                    print('POST-PROCESSING: Analyzing instance ' .. instance['ID'])
-                    print('   Series Description: ' .. seriesDescription)
-                    print('   Modality: ' .. modality)
-                    print('   Instance Number: ' .. instanceNumber)
-                    print('   SOP Instance UID: ' .. sopInstanceUID)
-                    
-                    if string.find(string.upper(seriesDescription), 'QA VISUALIZATION') then
-                        print('POST-PROCESSING: Detected QA Visualization - routing to LPCHROUTER and LPCHTROUTER')
-                        
-                        -- Route to LPCHROUTER
-                        local success1, job1 = pcall(function()
-                            return SendToModality(instance['ID'], 'LPCHROUTER')
-                        end)
-                        
-                        if success1 and job1 then
-                            print('   ✓ Successfully sent to LPCHROUTER (Job: ' .. tostring(job1) .. ')')
-                        else
-                            print('   ✗ Failed to send to LPCHROUTER: ' .. tostring(job1))
-                        end
-                        
-                        -- Route to LPCHTROUTER
-                        local success2, job2 = pcall(function()
-                            return SendToModality(instance['ID'], 'LPCHTROUTER')
-                        end)
-                        
-                        if success2 and job2 then
-                            print('   ✓ Successfully sent to LPCHTROUTER (Job: ' .. tostring(job2) .. ')')
-                        else
-                            print('   ✗ Failed to send to LPCHTROUTER: ' .. tostring(job2))
-                        end
-                        
-                        markAsProcessed(instance['ID'])
-                        print('   ✓ Instance marked as processed')
-                        
-                    elseif modality == 'SR' then
-                        print('POST-PROCESSING: Detected Structured Report - routing to MODLINK')
-                        
-                        local success1, job1 = pcall(function()
-                            return SendToModality(instance['ID'], 'MODLINK')
-                        end)
-                        
-                        if success1 and job1 then
-                            print('   ✓ Successfully sent to MODLINK (Job: ' .. tostring(job1) .. ')')
-                        else
-                            print('   ✗ Failed to send to MODLINK: ' .. tostring(job1))
-                        end
-                        
-                        markAsProcessed(instance['ID'])
-                        print('   ✓ Instance marked as processed')
-                        
-                    else
-                        print('POST-PROCESSING: Unhandled instance type')
-                        print('   Series Description: ' .. seriesDescription)
-                        print('   Modality: ' .. modality)
-                        print('   Skipping routing for this instance')
-                    end
-                else
-                    print('Failed to retrieve tags for instance: ' .. tostring(instance['ID']))
-                end
-            else
-                print('Instance ' .. instance['ID'] .. ' has already been processed, skipping')
-            end
+        if success and job then
+            print('   ✓ Highest resolution instance queued for MERCURE (Job: ' .. tostring(job) .. ')')
+            print('AUTO-FORWARD: Bone length study (highest res) forwarded to MERCURE - Patient: ' .. 
+                      patientName .. ', Study: ' .. studyId .. ', Job: ' .. tostring(job))
+        else
+            print('   ✗ FAILED to queue highest resolution instance to MERCURE - Error: ' .. tostring(job))
+            print('AUTO-FORWARD FAILED: Could not send highest resolution instance - Study: ' .. studyId)
         end
     else
-        -- Original processing for incoming bone length studies
-        local studyDescription = tags['StudyDescription'] or ''
-        local normalizedDescription = string.upper(studyDescription)
-        
-        if string.find(normalizedDescription, 'EXTREMITY BILATERAL BONE LENGTH') then
-            local success, instances = pcall(function()
-                local response = RestApiGet('/studies/' .. studyId .. '/instances')
-                return response and ParseJson(response) or nil
-            end)
-            
-            if not success or not instances then
-                print('   Failed to retrieve instances for study: ' .. studyId)
-                return
-            end
-            
-            if hasStanfordAIDEOutput(instances) then
-                print('   Study already processed by Stanford AIDE, skipping')
-                return
-            end
-
-            local patientName = tags['PatientName'] or 'Unknown'
-            local studyInstanceUID = tags['StudyInstanceUID'] or 'Unknown'
-            
-            print('🦴 PROCESSING NEW BONE LENGTH STUDY')
-            print('   Study ID: ' .. studyId)
-            print('   Patient: ' .. patientName)
-            print('   Study UID: ' .. studyInstanceUID)
-            print('   Original Description: ' .. studyDescription)
-            print('   Found ' .. getTableLength(instances) .. ' instances in study')
-            
-            local bestInstance = findHighestResolutionInstance(instances)
-            
-            if bestInstance then
-                local success, job = pcall(function()
-                    return SendToModality(bestInstance['ID'], 'MERCURE')
-                end)
-                
-                if success and job then
-                    print('   ✓ Highest resolution instance queued for MERCURE (Job: ' .. tostring(job) .. ')')
-                    print('AUTO-FORWARD: Bone length study (highest res) forwarded to MERCURE - Patient: ' .. 
-                              patientName .. ', Study: ' .. studyId .. ', Job: ' .. tostring(job))
-                else
-                    print('   ✗ Failed to queue highest resolution instance')
-                    print('AUTO-FORWARD FAILED: Could not send highest resolution instance - Study: ' .. studyId)
-                end
-            else
-                print('   ⚠ No valid instance found with matrix dimensions')
-                print('AUTO-FORWARD FAILED: No valid high-resolution instance found - Study: ' .. studyId)
-            end
-        end
+        print('   ⚠ No valid instance found with matrix dimensions')
+        print('AUTO-FORWARD FAILED: No valid high-resolution instance found - Study: ' .. studyId)
     end
 end
