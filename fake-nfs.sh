@@ -77,8 +77,9 @@ sudo mkdir -p /srv/nfs/orthanc
 sudo chown root:root /srv/nfs/orthanc
 sudo chmod 755 /srv/nfs/orthanc
 
-# Create exports file entry
-echo "/srv/nfs/orthanc *(rw,sync,no_subtree_check)" | sudo tee /etc/exports
+# Create exports file entry with no_root_squash
+echo "Creating exports configuration..."
+echo "/srv/nfs/orthanc *(rw,sync,no_subtree_check,no_root_squash)" | sudo tee /etc/exports
 
 # Configure firewall
 echo "Configuring firewall..."
@@ -120,6 +121,8 @@ else
     ls -la /nfs-share/data
     echo "Source directory:"
     ls -la /srv/nfs/orthanc
+    echo "Current user:"
+    id
 fi
 
 echo "🔍 Final status check:"
@@ -127,3 +130,5 @@ echo "NFS Server: $(sudo systemctl is-active nfs-server)"
 echo "RPC Bind: $(sudo systemctl is-active rpcbind)"
 echo "Exports:"
 sudo showmount -e localhost 2>/dev/null || echo "No exports found"
+echo "Export options:"
+sudo exportfs -v
