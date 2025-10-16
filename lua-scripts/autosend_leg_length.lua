@@ -254,8 +254,10 @@ function OnStableStudy(studyId, tags, metadata, origin)
                         print('      Modality: ' .. modality)
                         print('      Series Description: ' .. seriesDescription)
                         
-                        -- Route QA Visualization to DICOM QA routers
-                        if string.find(string.upper(seriesDescription), 'QA VISUALIZATION') then
+                        -- Route QA Visualization to DICOM QA routers (exact match only, not QA Table Visualization)
+                        local upperSeriesDesc = string.upper(seriesDescription)
+                        if string.find(upperSeriesDesc, 'QA VISUALIZATION') and 
+                           not string.find(upperSeriesDesc, 'TABLE') then
                             print('   ✓ Detected QA Visualization - routing to LPCHROUTER and LPCHTROUTER')
                             
                             -- Route to LPCHROUTER
@@ -281,8 +283,14 @@ function OnStableStudy(studyId, tags, metadata, origin)
                             end
                             
                             -- Mark as processed after routing
-                            markAsProcessed(instance['ID'])
-                            print('      ✓ Instance marked as processed')
+                            local markSuccess = pcall(function()
+                                markAsProcessed(instance['ID'])
+                            end)
+                            if markSuccess then
+                                print('      ✓ Instance marked as processed')
+                            else
+                                print('      ⚠ Could not mark instance as processed (instance may have been moved/deleted)')
+                            end
                         
                         -- Route Structured Reports to MODLINK
                         elseif modality == 'SR' then
@@ -299,8 +307,14 @@ function OnStableStudy(studyId, tags, metadata, origin)
                             end
                             
                             -- Mark as processed after routing
-                            markAsProcessed(instance['ID'])
-                            print('      ✓ Instance marked as processed')
+                            local markSuccess = pcall(function()
+                                markAsProcessed(instance['ID'])
+                            end)
+                            if markSuccess then
+                                print('      ✓ Instance marked as processed')
+                            else
+                                print('      ⚠ Could not mark instance as processed (instance may have been moved/deleted)')
+                            end
                         else
                             print('      ℹ Instance does not require routing (not QA Visualization or SR)')
                         end
