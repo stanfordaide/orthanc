@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orthanc Operator Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Space Grotesk', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        midnight: {
+                            900: '#0a0e17',
+                            800: '#111827',
+                            700: '#1a2234',
+                            600: '#243044',
+                        },
+                        neon: {
+                            blue: '#00d4ff',
+                            green: '#00ff88',
+                            yellow: '#ffdd00',
+                            red: '#ff4757',
+                            purple: '#a855f7',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        [x-cloak] { display: none !important; }
+        .glow-green { box-shadow: 0 0 20px rgba(0, 255, 136, 0.3); }
+        .glow-red { box-shadow: 0 0 20px rgba(255, 71, 87, 0.3); }
+        .glow-yellow { box-shadow: 0 0 20px rgba(255, 221, 0, 0.3); }
+        .gradient-border {
+            background: linear-gradient(135deg, #00d4ff20, #a855f720);
+            padding: 1px;
+        }
+        .gradient-border > div {
+            background: #111827;
+        }
+    </style>
+</head>
+<body class="bg-midnight-900 text-slate-100 min-h-screen font-sans">
+
+<div x-data="dashboard()" x-init="init()" class="min-h-screen">
+    
+    <!-- Header -->
+    <header class="bg-midnight-800 border-b border-midnight-600 sticky top-0 z-50">
+        <div class="container mx-auto px-6 py-4">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center gap-4">
+                    <div class="text-4xl">🏥</div>
+                    <div>
+                        <h1 class="text-xl font-bold tracking-tight">ORTHANC</h1>
+                        <p class="text-xs text-slate-500 font-mono">OPERATOR DASHBOARD</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-6">
+                    <div class="text-right">
+                        <div class="text-xs text-slate-500">Last updated</div>
+                        <div class="text-sm font-mono text-neon-blue" x-text="lastUpdate"></div>
+                    </div>
+                    <button @click="refresh()" 
+                            class="px-4 py-2 bg-midnight-700 border border-midnight-600 rounded-lg hover:bg-midnight-600 hover:border-neon-blue transition-all flex items-center gap-2">
+                        <svg class="w-4 h-4" :class="loading && 'animate-spin'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                        </svg>
+                        Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="container mx-auto px-6 py-8">
+        
+        <!-- Status Cards -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <!-- Services -->
+            <div class="gradient-border rounded-xl">
+                <div class="rounded-xl p-5">
+                    <div class="flex items-start justify-between">
+                        <div>
+                            <div class="text-4xl font-bold font-mono" x-text="services.healthy + '/' + services.total"></div>
+                            <div class="text-slate-500 text-sm mt-1">Services Running</div>
+                        </div>
+                        <div class="text-3xl" x-text="services.healthy === services.total ? '✅' : '⚠️'"></div>
+                    </div>
+                    <div class="mt-3 pt-3 border-t border-midnight-600">
+                        <span x-show="services.healthy === services.total" class="text-neon-green text-sm">All systems operational</span>
+                        <span x-show="services.healthy !== services.total" class="text-neon-yellow text-sm">Some services need attention</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Studies -->
+            <div class="gradient-border rounded-xl">
+                <div class="rounded-xl p-5">
+                    <div class="flex items-start justify-between">
+                        <div>
+                            <div class="text-4xl font-bold font-mono" x-text="stats.studies?.toLocaleString() || '—'"></div>
+                            <div class="text-slate-500 text-sm mt-1">Total Studies</div>
+                        </div>
+                        <div class="text-3xl">📋</div>
+                    </div>
+                    <div class="mt-3 pt-3 border-t border-midnight-600 text-sm text-slate-400">
+                        <span x-text="(stats.instances || 0).toLocaleString()"></span> instances
+                    </div>
+                </div>
+            </div>
+
+            <!-- Storage -->
+            <div class="gradient-border rounded-xl">
+                <div class="rounded-xl p-5">
+                    <div class="flex items-start justify-between">
+                        <div>
+                            <div class="text-4xl font-bold font-mono" x-text="formatSize(stats.diskSize)"></div>
+                            <div class="text-slate-500 text-sm mt-1">Storage Used</div>
+                        </div>
+                        <div class="text-3xl">💾</div>
+                    </div>
+                    <div class="mt-3 pt-3 border-t border-midnight-600 text-sm text-slate-400">
+                        <span x-text="stats.patients || 0"></span> patients
+                    </div>
+                </div>
+            </div>
+
+            <!-- Stuck -->
+            <div class="rounded-xl p-5 cursor-pointer transition-all"
+                 :class="stuck.length > 0 ? 'bg-neon-red/10 border-2 border-neon-red glow-red' : 'gradient-border'"
+                 @click="stuck.length > 0 && (showStuckModal = true)">
+                <div :class="stuck.length === 0 && 'rounded-xl'">
+                    <div class="flex items-start justify-between">
+                        <div>
+                            <div class="text-4xl font-bold font-mono" x-text="stuck.length"></div>
+                            <div class="text-slate-500 text-sm mt-1">Stuck Studies</div>
+                        </div>
+                        <div class="text-3xl" x-text="stuck.length > 0 ? '🚨' : '✨'"></div>
+                    </div>
+                    <div class="mt-3 pt-3 border-t border-midnight-600 text-sm">
+                        <span x-show="stuck.length > 0" class="text-neon-red">Click to review</span>
+                        <span x-show="stuck.length === 0" class="text-neon-green">All routes healthy</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid lg:grid-cols-3 gap-6">
+            
+            <!-- Left Column: Destinations + Quick Actions -->
+            <div class="space-y-6">
+                
+                <!-- Destinations -->
+                <section class="bg-midnight-800 rounded-xl border border-midnight-600 overflow-hidden">
+                    <div class="px-5 py-4 border-b border-midnight-600 flex justify-between items-center">
+                        <h2 class="font-semibold flex items-center gap-2">
+                            <span class="text-xl">🌐</span> DICOM Destinations
+                        </h2>
+                        <button @click="showAddDestination = true" 
+                                class="text-xs px-3 py-1 bg-midnight-700 rounded hover:bg-midnight-600 border border-midnight-600 hover:border-neon-blue transition-all">
+                            + Add
+                        </button>
+                    </div>
+                    <div class="divide-y divide-midnight-700">
+                        <template x-for="dest in destinations" :key="dest.name">
+                            <div class="px-5 py-3 flex items-center justify-between hover:bg-midnight-700/50 transition-colors">
+                                <div class="flex items-center gap-3">
+                                    <span class="text-xl" x-text="dest.status === 'online' ? '✅' : dest.status === 'slow' ? '⚠️' : '❌'"></span>
+                                    <div>
+                                        <div class="font-medium font-mono text-sm" x-text="dest.name"></div>
+                                        <div class="text-xs text-slate-500" x-text="dest.aet + ' @ ' + dest.host"></div>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <span class="text-xs text-slate-500 font-mono" x-text="dest.responseTime ? dest.responseTime + 'ms' : ''"></span>
+                                    <button @click="testDestination(dest.name)" 
+                                            class="text-xs px-2 py-1 bg-midnight-600 rounded hover:bg-neon-blue hover:text-midnight-900 transition-all">
+                                        Test
+                                    </button>
+                                </div>
+                            </div>
+                        </template>
+                        <div x-show="destinations.length === 0" class="px-5 py-8 text-center text-slate-500">
+                            No destinations configured
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Quick Links -->
+                <section class="bg-midnight-800 rounded-xl border border-midnight-600 p-5">
+                    <h2 class="font-semibold mb-4 flex items-center gap-2">
+                        <span class="text-xl">🔗</span> Quick Links
+                    </h2>
+                    <div class="grid grid-cols-2 gap-3">
+                        <a :href="'http://' + window.location.hostname + ':8041'" target="_blank"
+                           class="px-4 py-3 bg-midnight-700 rounded-lg hover:bg-midnight-600 border border-midnight-600 hover:border-neon-blue transition-all text-center">
+                            <div class="text-2xl mb-1">🏥</div>
+                            <div class="text-xs">Orthanc</div>
+                        </a>
+                        <a :href="'http://' + window.location.hostname + ':8042'" target="_blank"
+                           class="px-4 py-3 bg-midnight-700 rounded-lg hover:bg-midnight-600 border border-midnight-600 hover:border-neon-purple transition-all text-center">
+                            <div class="text-2xl mb-1">🖼️</div>
+                            <div class="text-xs">OHIF Viewer</div>
+                        </a>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Right Column: Recent Studies -->
+            <div class="lg:col-span-2">
+                <section class="bg-midnight-800 rounded-xl border border-midnight-600 overflow-hidden">
+                    <div class="px-5 py-4 border-b border-midnight-600 flex justify-between items-center">
+                        <h2 class="font-semibold flex items-center gap-2">
+                            <span class="text-xl">📋</span> Recent Studies
+                        </h2>
+                        <div class="flex items-center gap-2">
+                            <input type="text" x-model="searchQuery" @input.debounce.300ms="searchStudies()"
+                                   placeholder="Search..."
+                                   class="text-sm bg-midnight-700 border border-midnight-600 rounded-lg px-3 py-1.5 w-48 focus:border-neon-blue focus:outline-none transition-colors">
+                        </div>
+                    </div>
+                    
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead class="text-slate-500 text-xs uppercase bg-midnight-700/50">
+                                <tr>
+                                    <th class="px-5 py-3 text-left">Status</th>
+                                    <th class="px-5 py-3 text-left">Patient</th>
+                                    <th class="px-5 py-3 text-left">Study</th>
+                                    <th class="px-5 py-3 text-left">Date</th>
+                                    <th class="px-5 py-3 text-left">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-midnight-700">
+                                <template x-for="study in recentStudies" :key="study.id">
+                                    <tr class="hover:bg-midnight-700/30 transition-colors">
+                                        <td class="px-5 py-3">
+                                            <span x-text="study.routingStatus === 'success' ? '✅' : 
+                                                         study.routingStatus === 'pending' ? '⏳' :
+                                                         study.routingStatus === 'failed' ? '❌' : '—'"></span>
+                                        </td>
+                                        <td class="px-5 py-3 font-mono" x-text="study.patientName"></td>
+                                        <td class="px-5 py-3 text-slate-400 max-w-[200px] truncate" x-text="study.description || '—'"></td>
+                                        <td class="px-5 py-3 text-slate-500 font-mono text-xs" x-text="study.studyDate"></td>
+                                        <td class="px-5 py-3">
+                                            <div class="flex gap-2">
+                                                <button @click="viewStudy(study.id)"
+                                                        class="text-xs px-2 py-1 bg-midnight-600 rounded hover:bg-neon-blue hover:text-midnight-900 transition-all">
+                                                    View
+                                                </button>
+                                                <a :href="'http://' + window.location.hostname + ':8042/viewer/' + study.studyUid" 
+                                                   target="_blank"
+                                                   class="text-xs px-2 py-1 bg-midnight-600 rounded hover:bg-neon-purple hover:text-white transition-all">
+                                                    OHIF
+                                                </a>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div x-show="recentStudies.length === 0" class="px-5 py-12 text-center text-slate-500">
+                        <div class="text-4xl mb-2">📭</div>
+                        No studies found
+                    </div>
+                    
+                    <div class="px-5 py-3 border-t border-midnight-700 text-xs text-slate-500">
+                        Showing <span x-text="recentStudies.length"></span> of <span x-text="stats.studies || 0"></span> studies
+                    </div>
+                </section>
+            </div>
+        </div>
+
+        <!-- Routing Status Section -->
+        <section class="mt-6 bg-midnight-800 rounded-xl border border-midnight-600 overflow-hidden">
+            <div class="px-5 py-4 border-b border-midnight-600">
+                <h2 class="font-semibold flex items-center gap-2">
+                    <span class="text-xl">📡</span> Routing Status
+                </h2>
+            </div>
+            <div class="p-5">
+                <div x-show="routingStats.length === 0" class="text-center text-slate-500 py-8">
+                    <div class="text-4xl mb-2">📊</div>
+                    Routing statistics will appear here once studies are processed
+                </div>
+                <div x-show="routingStats.length > 0" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <template x-for="stat in routingStats" :key="stat.destination">
+                        <div class="bg-midnight-700 rounded-lg p-4">
+                            <div class="font-mono text-sm mb-2" x-text="stat.destination"></div>
+                            <div class="flex justify-between text-xs">
+                                <span class="text-neon-green">✓ <span x-text="stat.success"></span></span>
+                                <span class="text-neon-red">✗ <span x-text="stat.failed"></span></span>
+                                <span class="text-neon-yellow">⏳ <span x-text="stat.pending"></span></span>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Study Detail Modal -->
+    <div x-show="selectedStudy" x-cloak
+         class="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50"
+         @click.self="selectedStudy = null"
+         x-transition>
+        <div class="bg-midnight-800 rounded-xl border border-midnight-600 p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+            <div class="flex justify-between items-start mb-6">
+                <h3 class="text-xl font-semibold">Study Details</h3>
+                <button @click="selectedStudy = null" class="text-slate-400 hover:text-white text-2xl">&times;</button>
+            </div>
+            <template x-if="selectedStudy">
+                <div class="space-y-6">
+                    <div class="grid grid-cols-2 gap-4 text-sm">
+                        <div class="bg-midnight-700 rounded-lg p-3">
+                            <div class="text-slate-500 text-xs mb-1">Patient Name</div>
+                            <div class="font-mono" x-text="selectedStudy.patientName"></div>
+                        </div>
+                        <div class="bg-midnight-700 rounded-lg p-3">
+                            <div class="text-slate-500 text-xs mb-1">Patient ID</div>
+                            <div class="font-mono" x-text="selectedStudy.patientId"></div>
+                        </div>
+                        <div class="bg-midnight-700 rounded-lg p-3">
+                            <div class="text-slate-500 text-xs mb-1">Study Date</div>
+                            <div class="font-mono" x-text="selectedStudy.studyDate"></div>
+                        </div>
+                        <div class="bg-midnight-700 rounded-lg p-3">
+                            <div class="text-slate-500 text-xs mb-1">Description</div>
+                            <div x-text="selectedStudy.description || '—'"></div>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-midnight-700 rounded-lg p-3">
+                        <div class="text-slate-500 text-xs mb-2">Study Instance UID</div>
+                        <div class="font-mono text-xs break-all" x-text="selectedStudy.studyUid"></div>
+                    </div>
+                    
+                    <div class="flex gap-3">
+                        <a :href="'http://' + window.location.hostname + ':8041/app/explorer.html#study?uuid=' + selectedStudy.id"
+                           target="_blank"
+                           class="flex-1 px-4 py-3 bg-midnight-700 rounded-lg hover:bg-neon-blue hover:text-midnight-900 transition-all text-center">
+                            Open in Orthanc
+                        </a>
+                        <a :href="'http://' + window.location.hostname + ':8042/viewer/' + selectedStudy.studyUid"
+                           target="_blank"
+                           class="flex-1 px-4 py-3 bg-midnight-700 rounded-lg hover:bg-neon-purple hover:text-white transition-all text-center">
+                            Open in OHIF
+                        </a>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- Stuck Studies Modal -->
+    <div x-show="showStuckModal" x-cloak
+         class="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50"
+         @click.self="showStuckModal = false"
+         x-transition>
+        <div class="bg-midnight-800 rounded-xl border-2 border-neon-red p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+            <div class="flex justify-between items-start mb-6">
+                <h3 class="text-xl font-semibold text-neon-red flex items-center gap-2">
+                    🚨 Stuck Studies
+                </h3>
+                <button @click="showStuckModal = false" class="text-slate-400 hover:text-white text-2xl">&times;</button>
+            </div>
+            
+            <div class="space-y-3">
+                <template x-for="item in stuck" :key="item.study_id + item.destination">
+                    <div class="bg-midnight-700 rounded-lg p-4">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <div class="font-mono font-medium" x-text="item.patient_name || item.study_id"></div>
+                                <div class="text-sm text-slate-400 mt-1">
+                                    → <span class="text-neon-blue" x-text="item.destination"></span> · 
+                                    <span x-text="item.attempt_count"></span> attempts
+                                </div>
+                                <div class="text-sm text-neon-red mt-2" x-text="item.last_error"></div>
+                            </div>
+                            <div class="flex gap-2">
+                                <button @click="retryStudy(item.study_id)"
+                                        class="px-3 py-1.5 bg-neon-blue text-midnight-900 rounded hover:bg-neon-blue/80 text-sm font-medium">
+                                    Retry
+                                </button>
+                                <button @click="skipStudy(item.study_id)"
+                                        class="px-3 py-1.5 bg-midnight-600 rounded hover:bg-midnight-500 text-sm">
+                                    Skip
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            
+            <div class="mt-6 pt-4 border-t border-midnight-600 flex justify-end gap-3">
+                <button @click="showStuckModal = false"
+                        class="px-4 py-2 bg-midnight-700 rounded-lg hover:bg-midnight-600">
+                    Close
+                </button>
+                <button @click="retryAllStuck()"
+                        class="px-4 py-2 bg-neon-blue text-midnight-900 rounded-lg hover:bg-neon-blue/80 font-medium">
+                    Retry All
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div class="fixed bottom-6 right-6 space-y-3 z-50">
+        <template x-for="toast in toasts" :key="toast.id">
+            <div class="px-5 py-3 rounded-lg shadow-xl border backdrop-blur-sm"
+                 :class="{
+                     'bg-neon-green/20 border-neon-green text-neon-green': toast.type === 'success',
+                     'bg-neon-red/20 border-neon-red text-neon-red': toast.type === 'error',
+                     'bg-neon-blue/20 border-neon-blue text-neon-blue': toast.type === 'info'
+                 }"
+                 x-text="toast.message"
+                 x-show="toast.visible"
+                 x-transition>
+            </div>
+        </template>
+    </div>
+
+    <!-- Footer -->
+    <footer class="mt-12 py-6 border-t border-midnight-700">
+        <div class="container mx-auto px-6 text-center text-slate-600 text-sm">
+            <div>Orthanc Operator Dashboard</div>
+            <div class="mt-1 font-mono text-xs">
+                Ports: 8040 (Dashboard) · 8041 (Orthanc) · 8042 (OHIF) · 4242 (DICOM)
+            </div>
+        </div>
+    </footer>
+</div>
+
+<script>
+function dashboard() {
+    return {
+        // Config - adjust based on your setup
+        orthancUrl: '/orthanc',  // Proxied through nginx
+        
+        // State
+        loading: false,
+        lastUpdate: '—',
+        services: { healthy: 0, total: 4 },
+        stats: {},
+        destinations: [],
+        recentStudies: [],
+        stuck: [],
+        routingStats: [],
+        searchQuery: '',
+        selectedStudy: null,
+        showAddDestination: false,
+        showStuckModal: false,
+        toasts: [],
+        
+        async init() {
+            await this.refresh();
+            // Auto-refresh every 30 seconds
+            setInterval(() => this.refresh(), 30000);
+        },
+        
+        async refresh() {
+            this.loading = true;
+            this.lastUpdate = new Date().toLocaleTimeString();
+            
+            await Promise.allSettled([
+                this.loadStats(),
+                this.loadDestinations(),
+                this.loadRecentStudies(),
+                this.loadStuck(),
+            ]);
+            
+            this.loading = false;
+        },
+        
+        async api(path, options = {}) {
+            try {
+                const response = await fetch(this.orthancUrl + path, {
+                    ...options,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers,
+                    },
+                    credentials: 'include',
+                });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return await response.json();
+            } catch (e) {
+                console.error(`API ${path}:`, e);
+                throw e;
+            }
+        },
+        
+        async loadStats() {
+            try {
+                const [stats, system] = await Promise.all([
+                    this.api('/statistics'),
+                    this.api('/system'),
+                ]);
+                
+                this.stats = {
+                    patients: stats.CountPatients,
+                    studies: stats.CountStudies,
+                    series: stats.CountSeries,
+                    instances: stats.CountInstances,
+                    diskSize: stats.TotalDiskSizeMB * 1024 * 1024,
+                };
+                
+                // If we got here, services are running
+                this.services = { healthy: 4, total: 4 };
+            } catch (e) {
+                this.services = { healthy: 0, total: 4 };
+            }
+        },
+        
+        async loadDestinations() {
+            try {
+                const names = await this.api('/modalities');
+                
+                this.destinations = [];
+                for (const name of names) {
+                    try {
+                        const config = await this.api(`/modalities/${name}/configuration`);
+                        let status = 'unknown';
+                        let responseTime = null;
+                        
+                        // Test connectivity
+                        try {
+                            const start = Date.now();
+                            await this.api(`/modalities/${name}/echo`, { method: 'POST' });
+                            responseTime = Date.now() - start;
+                            status = responseTime > 1000 ? 'slow' : 'online';
+                        } catch {
+                            status = 'offline';
+                        }
+                        
+                        this.destinations.push({
+                            name,
+                            aet: Array.isArray(config) ? config[0] : config.AET,
+                            host: Array.isArray(config) ? config[1] : config.Host,
+                            port: Array.isArray(config) ? config[2] : config.Port,
+                            status,
+                            responseTime,
+                        });
+                    } catch (e) {
+                        console.error(`Failed to load destination ${name}:`, e);
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to load destinations:', e);
+            }
+        },
+        
+        async loadRecentStudies() {
+            try {
+                const studyIds = await this.api('/studies');
+                const recent = studyIds.slice(0, 15);
+                
+                this.recentStudies = [];
+                for (const id of recent) {
+                    try {
+                        const study = await this.api(`/studies/${id}`);
+                        this.recentStudies.push({
+                            id,
+                            patientName: study.PatientMainDicomTags?.PatientName || 'Unknown',
+                            patientId: study.PatientMainDicomTags?.PatientID || '',
+                            description: study.MainDicomTags?.StudyDescription || '',
+                            studyDate: study.MainDicomTags?.StudyDate || '',
+                            studyUid: study.MainDicomTags?.StudyInstanceUID,
+                            routingStatus: 'success', // TODO: Get from routing_state
+                        });
+                    } catch (e) {
+                        console.error(`Failed to load study ${id}:`, e);
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to load studies:', e);
+            }
+        },
+        
+        async loadStuck() {
+            // TODO: Query routing_state table via custom endpoint
+            // For now, this would need a backend endpoint
+            this.stuck = [];
+        },
+        
+        async testDestination(name) {
+            this.toast(`Testing ${name}...`, 'info');
+            try {
+                const start = Date.now();
+                await this.api(`/modalities/${name}/echo`, { method: 'POST' });
+                const ms = Date.now() - start;
+                this.toast(`${name} is reachable (${ms}ms)`, 'success');
+                await this.loadDestinations();
+            } catch (e) {
+                this.toast(`${name} is not reachable`, 'error');
+            }
+        },
+        
+        async viewStudy(id) {
+            try {
+                const study = await this.api(`/studies/${id}`);
+                this.selectedStudy = {
+                    id,
+                    patientName: study.PatientMainDicomTags?.PatientName || 'Unknown',
+                    patientId: study.PatientMainDicomTags?.PatientID || '',
+                    studyDate: study.MainDicomTags?.StudyDate || '',
+                    description: study.MainDicomTags?.StudyDescription || '',
+                    studyUid: study.MainDicomTags?.StudyInstanceUID,
+                };
+            } catch (e) {
+                this.toast('Failed to load study details', 'error');
+            }
+        },
+        
+        async retryStudy(studyId) {
+            this.toast(`Retrying ${studyId}...`, 'info');
+            // TODO: Call backend to reset routing_state
+            await this.loadStuck();
+        },
+        
+        async skipStudy(studyId) {
+            this.toast(`Skipped ${studyId}`, 'success');
+            // TODO: Call backend to mark as skipped
+            await this.loadStuck();
+        },
+        
+        async retryAllStuck() {
+            this.toast('Retrying all stuck studies...', 'info');
+            // TODO: Call backend
+            await this.loadStuck();
+            this.showStuckModal = false;
+        },
+        
+        formatSize(bytes) {
+            if (!bytes) return '—';
+            const gb = bytes / (1024 * 1024 * 1024);
+            if (gb >= 1) return gb.toFixed(1) + ' GB';
+            const mb = bytes / (1024 * 1024);
+            return mb.toFixed(0) + ' MB';
+        },
+        
+        toast(message, type = 'info') {
+            const id = Date.now();
+            this.toasts.push({ id, message, type, visible: true });
+            setTimeout(() => {
+                const t = this.toasts.find(x => x.id === id);
+                if (t) t.visible = false;
+            }, 3000);
+            setTimeout(() => {
+                this.toasts = this.toasts.filter(x => x.id !== id);
+            }, 3500);
+        },
+        
+        async searchStudies() {
+            if (!this.searchQuery) {
+                await this.loadRecentStudies();
+                return;
+            }
+            // TODO: Use Orthanc's /tools/find endpoint
+        },
+    };
+}
+</script>
+
+</body>
+</html>

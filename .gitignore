@@ -1,0 +1,38 @@
+# Environment (contains passwords)
+.env
+
+# Data directories
+data/
+*.db
+
+# Docker overrides
+docker-compose.override.yml
+
+# Backups
+*.backup
+*.bak
+backups/
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python (if CLI is extended)
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Temp files
+*.tmp
+*.temp

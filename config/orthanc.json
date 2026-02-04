@@ -1,0 +1,134 @@
+{
+    "Name" : "Orthanc",
+    "StorageDirectory" : "/var/lib/orthanc/db",
+    "StorageCompression" : false,
+    "MaximumStorageSize" : 0,
+    "MaximumPatientCount" : 0,
+    "ConcurrentJobs" : 2,
+  
+    "LuaScripts" : ["/etc/orthanc/lua/"],
+    "Plugins" : [ 
+      "/usr/share/orthanc/plugins", 
+      "/usr/local/share/orthanc/plugins"
+    ],
+  
+    "PostgreSQL" : {
+      "EnableIndex" : true,
+      "EnableStorage" : false,
+      "Host" : "orthanc-db",
+      "Port" : 5432,
+      "Database" : "orthanc",
+      "Username" : "orthanc",
+      "Password" : "orthanc",
+      "EnableSsl" : false,
+      "MaximumConnectionRetries" : 20,
+      "ConnectionRetryInterval" : 5,
+      "PrepareIndex" : true,
+      "Lock" : true
+    },
+
+    "HttpServerEnabled" : true,
+    "OrthancExplorerEnabled" : true,
+    "HttpPort" : 8042,
+    "HttpDescribeErrors" : true,
+    "HttpCompressionEnabled" : true,
+    "HttpThreadsCount" : 50,
+    "HttpRequestTimeout" : 30,
+  
+    "WebDavEnabled" : true,
+    "WebDavDeleteAllowed" : false,
+    "WebDavUploadAllowed" : true,
+  
+    "DicomServerEnabled" : true,
+    "DicomAet" : "ORTHANC",
+    "DicomCheckCalledAet" : false,
+    "DicomPort" : 4242,
+    "DefaultEncoding" : "Latin1",
+    "AcceptedTransferSyntaxes" : [ "1.2.840.10008.1.*" ],
+    "UnknownSopClassAccepted" : false,
+    "DicomScpTimeout" : 30,
+    "DicomScuTimeout" : 10,
+    "DicomScuPreferredTransferSyntax" : "1.2.840.10008.1.2.1",
+  
+    "RemoteAccessAllowed" : true,
+    "SslEnabled" : false,
+    "SslCertificate" : "certificate.pem",
+    "SslMinimumProtocolVersion" : 4,
+    "SslVerifyPeers" : false,
+    "SslTrustedClientCertificates" : "trustedClientCertificates.pem",
+  
+    "AuthenticationEnabled" : true,
+    "RegisteredUsers" : {
+      "orthanc_admin": "orthanc"
+    },
+  
+    "DicomTlsEnabled" : false,
+    "DicomTlsRemoteCertificateRequired" : true,
+  
+    "DicomAlwaysAllowEcho" : true,
+    "DicomAlwaysAllowStore" : true,
+    "DicomAlwaysAllowFind" : false,
+    "DicomAlwaysAllowGet" : false,
+    "DicomAlwaysAllowMove" : false,
+    "DicomCheckModalityHost" : false,
+  
+    "DicomModalities" : {},
+    "DicomModalitiesInDatabase" : true,
+    "DicomEchoChecksFind" : false,
+  
+    "OrthancPeers" : {},
+    "OrthancPeersInDatabase" : true,
+  
+    "HttpProxy" : "",
+    "HttpVerbose" : false,
+    "HttpTimeout" : 60,
+    "HttpsVerifyPeers" : true,
+    "HttpsCACertificates" : "/etc/ssl/certs/ca-certificates.crt",
+  
+    "KeepAlive" : true,
+    "TcpNoDelay" : true,
+    "StableAge" : 60,
+    "LimitFindResults" : 0,
+    "LimitFindInstances" : 0,
+    "LimitJobs" : 10,
+    "QueryRetrieveSize" : 100,
+    "JobsHistorySize" : 10,
+    "MediaArchiveSize" : 1,
+    "StorageCommitmentReportsSize" : 100,
+    "MaximumPduLength" : 16384,
+  
+    "UserMetadata" : {},
+    "UserContentType" : {},
+    "StrictAetComparison" : false,
+    "StoreMD5ForAttachments" : true,
+    "StoreDicom" : true,
+    "OverwriteInstances" : false,
+    "CaseSensitivePN" : false,
+  
+    "LogExportedResources" : false,
+    "SaveJobs" : true,
+    "SynchronousCMove" : true,
+    "DicomAssociationCloseDelay" : 5,
+  
+    "LoadPrivateDictionary" : true,
+    "Dictionary" : {},
+    "DefaultPrivateCreator" : "",
+    "MetricsEnabled" : true,
+    "ExecuteLuaEnabled" : false,
+    "StorageAccessOnFind" : "Always",
+    "SyncStorageArea" : true,
+  
+    "TranscodeDicomProtocol" : true,
+    "BuiltinDecoderTranscoderOrder" : "After",
+    "IngestTranscodingOfUncompressed" : true,
+    "IngestTranscodingOfCompressed" : true,
+    "DicomLossyTranscodingQuality" : 90,
+  
+    "MallocArenaMax" : 5,
+    "SynchronousZipStream" : true,
+  
+    "DeidentifyLogs" : true,
+    "DeidentifyLogsDicomVersion" : "2021b",
+  
+    "CheckRevisions" : false
+}

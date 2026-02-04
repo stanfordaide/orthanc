@@ -1,0 +1,338 @@
+#!/bin/bash
+# ═══════════════════════════════════════════════════════════════════════════════
+# ORTHANC CLI - Management Tool
+# ═══════════════════════════════════════════════════════════════════════════════
+# Simple CLI for managing Orthanc PACS
+#
+# Usage: ./orthanc <command> [args]
+# ═══════════════════════════════════════════════════════════════════════════════
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Load environment
+if [[ -f .env ]]; then
+    export $(grep -v '^#' .env | xargs)
+fi
+
+# Configuration
+ORTHANC_URL="http://localhost:${ORTHANC_WEB_PORT:-8041}"
+ORTHANC_USER="${ORTHANC_USERNAME:-orthanc_admin}"
+ORTHANC_PASS="${ORTHANC_PASSWORD:-orthanc}"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# ─────────────────────────────────────────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────────────────────────────────────────
+
+api() {
+    curl -s -u "$ORTHANC_USER:$ORTHANC_PASS" "$ORTHANC_URL$1" "${@:2}"
+}
+
+api_post() {
+    curl -s -u "$ORTHANC_USER:$ORTHANC_PASS" -X POST "$ORTHANC_URL$1" "${@:2}"
+}
+
+print_header() {
+    echo -e "${CYAN}$1${NC}"
+    echo -e "${CYAN}$(printf '═%.0s' {1..60})${NC}"
+    echo
+}
+
+# ─────────────────────────────────────────────────────────────────────────────────
+# COMMANDS
+# ─────────────────────────────────────────────────────────────────────────────────
+
+cmd_status() {
+    print_header "🏥 ORTHANC STATUS"
+    
+    echo -e "${BLUE}SERVICES${NC}"
+    docker compose ps --format "  {{.Name}}: {{.Status}}" 2>/dev/null || echo "  (not running)"
+    echo
+    
+    echo -e "${BLUE}STORAGE${NC}"
+    local stats=$(api /statistics 2>/dev/null || echo "{}")
+    if command -v jq &>/dev/null && [[ -n "$stats" ]]; then
+        local studies=$(echo "$stats" | jq -r '.CountStudies // "?"')
+        local instances=$(echo "$stats" | jq -r '.CountInstances // "?"')
+        local size=$(echo "$stats" | jq -r '.TotalDiskSizeMB // "?"')
+        echo "  Studies:   $studies"
+        echo "  Instances: $instances"
+        echo "  Disk Size: ${size} MB"
+    else
+        echo "  (Orthanc not responding)"
+    fi
+    echo
+    
+    echo -e "${BLUE}ENDPOINTS${NC}"
+    echo "  Dashboard: http://localhost:${OPERATOR_UI_PORT:-8040}"
+    echo "  Orthanc:   http://localhost:${ORTHANC_WEB_PORT:-8041}"
+    echo "  OHIF:      http://localhost:${OHIF_PORT:-8042}"
+    echo "  DICOM:     ${ORTHANC_AET:-ORTHANC} @ port ${DICOM_PORT:-4242}"
+}
+
+cmd_start() {
+    echo -e "${GREEN}Starting Orthanc services...${NC}"
+    docker compose up -d
+    echo
+    echo -e "${GREEN}✓ Services started${NC}"
+    echo
+    echo "Waiting for services to be ready..."
+    sleep 5
+    cmd_status
+}
+
+cmd_stop() {
+    echo -e "${YELLOW}Stopping Orthanc services...${NC}"
+    docker compose stop
+    echo -e "${GREEN}✓ Services stopped${NC}"
+}
+
+cmd_restart() {
+    echo -e "${YELLOW}Restarting Orthanc services...${NC}"
+    docker compose restart
+    echo -e "${GREEN}✓ Services restarted${NC}"
+}
+
+cmd_logs() {
+    local service="${1:-}"
+    if [[ -n "$service" ]]; then
+        docker compose logs -f "$service"
+    else
+        docker compose logs -f
+    fi
+}
+
+cmd_destinations() {
+    print_header "🌐 DICOM DESTINATIONS"
+    
+    local modalities=$(api /modalities 2>/dev/null)
+    if ! command -v jq &>/dev/null || [[ -z "$modalities" ]]; then
+        echo "  (Unable to query Orthanc)"
+        return
+    fi
+    
+    echo "$modalities" | jq -r '.[]' | while read -r name; do
+        local config=$(api "/modalities/$name/configuration" 2>/dev/null)
+        local aet=$(echo "$config" | jq -r '.[0] // .AET // "?"')
+        local host=$(echo "$config" | jq -r '.[1] // .Host // "?"')
+        local port=$(echo "$config" | jq -r '.[2] // .Port // "?"')
+        
+        # Test connectivity
+        local status="❌"
+        if api_post "/modalities/$name/echo" &>/dev/null; then
+            status="✅"
+        fi
+        
+        printf "  %-15s %s  %s @ %s:%s\n" "$name" "$status" "$aet" "$host" "$port"
+    done
+}
+
+cmd_test() {
+    local dest="${1:-}"
+    if [[ -z "$dest" ]]; then
+        echo "Usage: orthanc test <destination>"
+        exit 1
+    fi
+    
+    echo "Testing $dest..."
+    if api_post "/modalities/$dest/echo" &>/dev/null; then
+        echo -e "${GREEN}✓ $dest is reachable${NC}"
+    else
+        echo -e "${RED}✗ $dest is not reachable${NC}"
+        exit 1
+    fi
+}
+
+cmd_studies() {
+    print_header "📋 RECENT STUDIES"
+    
+    local studies=$(api /studies 2>/dev/null)
+    if ! command -v jq &>/dev/null || [[ -z "$studies" ]]; then
+        echo "  (Unable to query Orthanc)"
+        return
+    fi
+    
+    echo "$studies" | jq -r '.[]' | head -20 | while read -r study_id; do
+        local info=$(api "/studies/$study_id" 2>/dev/null)
+        local patient=$(echo "$info" | jq -r '.PatientMainDicomTags.PatientName // "Unknown"')
+        local date=$(echo "$info" | jq -r '.MainDicomTags.StudyDate // "?"')
+        local desc=$(echo "$info" | jq -r '.MainDicomTags.StudyDescription // ""' | cut -c1-30)
+        
+        printf "%-12s %-20s %-10s %s\n" "${study_id:0:8}..." "$patient" "$date" "$desc"
+    done
+    
+    local total=$(api /statistics 2>/dev/null | jq -r '.CountStudies // "?"')
+    echo
+    echo "Total: $total studies (showing first 20)"
+}
+
+cmd_study() {
+    local study_id="${1:-}"
+    if [[ -z "$study_id" ]]; then
+        echo "Usage: orthanc study <study_id>"
+        exit 1
+    fi
+    
+    print_header "📋 STUDY: $study_id"
+    
+    local info=$(api "/studies/$study_id" 2>/dev/null)
+    if [[ -z "$info" ]]; then
+        echo -e "${RED}Study not found${NC}"
+        exit 1
+    fi
+    
+    if command -v jq &>/dev/null; then
+        echo "$info" | jq -r '
+            "Patient:     \(.PatientMainDicomTags.PatientName // "Unknown")",
+            "Patient ID:  \(.PatientMainDicomTags.PatientID // "?")",
+            "Study Date:  \(.MainDicomTags.StudyDate // "?")",
+            "Description: \(.MainDicomTags.StudyDescription // "")",
+            "Study UID:   \(.MainDicomTags.StudyInstanceUID // "?")",
+            "Series:      \(.Series | length)"
+        '
+    else
+        echo "$info"
+    fi
+}
+
+cmd_disk() {
+    print_header "💾 STORAGE USAGE"
+    
+    echo -e "${BLUE}DICOM Storage:${NC} ${DICOM_STORAGE:-./data/dicom}"
+    du -sh "${DICOM_STORAGE:-./data/dicom}" 2>/dev/null || echo "  (not found)"
+    echo
+    
+    echo -e "${BLUE}PostgreSQL:${NC} ${POSTGRES_STORAGE:-./data/postgres}"
+    du -sh "${POSTGRES_STORAGE:-./data/postgres}" 2>/dev/null || echo "  (not found)"
+    echo
+    
+    echo -e "${BLUE}Orthanc Statistics:${NC}"
+    api /statistics 2>/dev/null | jq -r '
+        "  Patients:  \(.CountPatients)",
+        "  Studies:   \(.CountStudies)",
+        "  Series:    \(.CountSeries)",
+        "  Instances: \(.CountInstances)",
+        "  Disk:      \(.TotalDiskSizeMB) MB"
+    ' 2>/dev/null || echo "  (not available)"
+}
+
+cmd_routing() {
+    print_header "📡 ROUTING STATUS"
+    
+    docker compose exec -T orthanc-db psql -U "${POSTGRES_USER:-orthanc}" -d orthanc -c \
+        "SELECT 
+            substring(study_id, 1, 8) as study,
+            patient_name,
+            destination,
+            status,
+            attempt_count as attempts
+         FROM routing_state 
+         ORDER BY created_at DESC 
+         LIMIT 20" 2>/dev/null || echo "  (routing table not initialized)"
+}
+
+cmd_stuck() {
+    print_header "⚠️ STUCK STUDIES"
+    
+    docker compose exec -T orthanc-db psql -U "${POSTGRES_USER:-orthanc}" -d orthanc -c \
+        "SELECT 
+            study_id,
+            patient_name,
+            destination,
+            attempt_count,
+            last_error
+         FROM routing_state 
+         WHERE status = 'stuck'
+         ORDER BY created_at DESC" 2>/dev/null || echo "  (none or table not initialized)"
+}
+
+cmd_shell() {
+    echo "Entering Orthanc container..."
+    docker compose exec orthanc /bin/bash
+}
+
+cmd_db() {
+    echo "Entering PostgreSQL..."
+    docker compose exec orthanc-db psql -U "${POSTGRES_USER:-orthanc}" -d orthanc
+}
+
+cmd_web() {
+    local url="http://localhost:${OPERATOR_UI_PORT:-8040}"
+    echo "Opening $url"
+    xdg-open "$url" 2>/dev/null || open "$url" 2>/dev/null || echo "Open: $url"
+}
+
+cmd_help() {
+    cat << 'EOF'
+🏥 ORTHANC CLI
+
+USAGE: ./orthanc <command> [args]
+
+SERVICE MANAGEMENT
+  start                 Start all services
+  stop                  Stop all services
+  restart               Restart all services
+  logs [service]        View logs (follow mode)
+  status                System overview
+
+EXPLORATION
+  studies               List recent studies
+  study <id>            Show study details
+  destinations          List DICOM destinations
+  test <dest>           Test destination (C-ECHO)
+  disk                  Storage usage
+  routing               Routing state summary
+  stuck                 Show stuck studies
+
+INTERACTIVE
+  shell                 Enter Orthanc container
+  db                    Enter PostgreSQL
+  web                   Open dashboard in browser
+
+PORTS
+  8040  Operator Dashboard
+  8041  Orthanc Web UI / API
+  8042  OHIF Viewer
+  4242  DICOM
+
+EOF
+}
+
+# ─────────────────────────────────────────────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────────────────────────────────────────────
+
+case "${1:-help}" in
+    start)        cmd_start ;;
+    stop)         cmd_stop ;;
+    restart)      cmd_restart ;;
+    logs)         cmd_logs "${2:-}" ;;
+    status)       cmd_status ;;
+    studies)      cmd_studies ;;
+    study)        cmd_study "${2:-}" ;;
+    destinations) cmd_destinations ;;
+    dest)         cmd_destinations ;;
+    test)         cmd_test "${2:-}" ;;
+    disk)         cmd_disk ;;
+    routing)      cmd_routing ;;
+    stuck)        cmd_stuck ;;
+    shell)        cmd_shell ;;
+    db)           cmd_db ;;
+    web)          cmd_web ;;
+    help|--help|-h) cmd_help ;;
+    *)
+        echo -e "${RED}Unknown command: $1${NC}"
+        echo "Run './orthanc help' for usage"
+        exit 1
+        ;;
+esac

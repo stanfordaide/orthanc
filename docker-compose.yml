@@ -1,66 +1,144 @@
-version: '3.1'
+# ═══════════════════════════════════════════════════════════════════════════════
+# ORTHANC PACS - Docker Compose Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Services:
+#   - operator-ui  : Operator Dashboard (port 8040)
+#   - orthanc      : PACS Server + API (port 8041, DICOM 4242)
+#   - ohif         : DICOM Viewer (port 8042)
+#   - orthanc-db   : PostgreSQL Database (port 8043)
+#
+# Quick start:
+#   cp config/env.template .env
+#   docker compose up -d
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+version: '3.8'
 
 services:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # OPERATOR DASHBOARD - Main entry point for operators
+  # ─────────────────────────────────────────────────────────────────────────────
+  operator-ui:
+    image: nginx:alpine
+    container_name: orthanc-operator-ui
+    ports:
+      - "${OPERATOR_UI_PORT:-8040}:80"
+    volumes:
+      - ./ui:/usr/share/nginx/html:ro
+      - ./ui/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - orthanc
+    environment:
+      - TZ=${TZ:-America/Los_Angeles}
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # ORTHANC - PACS Server
+  # ─────────────────────────────────────────────────────────────────────────────
   orthanc:
     image: jodogne/orthanc-python
+    container_name: orthanc-server
     command: /run/secrets/
     secrets:
       - orthanc.json
-    environment:
-      - ORTHANC_NAME=HelloWorld
-      - TZ=America/Los_Angeles
+    ports:
+      - "${ORTHANC_WEB_PORT:-8041}:8042"
+      - "${DICOM_PORT:-4242}:4242"
     volumes:
-      - ./lua-scripts:/etc/orthanc/lua
+      - ./lua:/etc/orthanc/lua:ro
       - orthanc-storage:/var/lib/orthanc/db
-    restart: always
-    ports:
-      - 8042:8042
-      - 4242:4242
-    depends_on:
-      - orthanc-db
-
-  orthanc-db:
-    image: postgres:15
     environment:
-      - POSTGRES_DB=orthanc
-      - POSTGRES_USER=orthanc
-      - POSTGRES_PASSWORD=ChangePasswordHere
-      - TZ=America/Los_Angeles
-    volumes:
-      - orthanc-db-data:/var/lib/postgresql/data
+      - ORTHANC_NAME=${ORTHANC_AET:-ORTHANC}
+      - TZ=${TZ:-America/Los_Angeles}
+    depends_on:
+      orthanc-db:
+        condition: service_healthy
     restart: always
-    ports:
-      - "5433:5432"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8042/system"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
+  # ─────────────────────────────────────────────────────────────────────────────
+  # OHIF VIEWER - Clinical image viewing
+  # ─────────────────────────────────────────────────────────────────────────────
   ohif:
     image: mercureimaging/ohif
+    container_name: orthanc-ohif
     ports:
-      - 8008:80
+      - "${OHIF_PORT:-8042}:80"
     volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./config/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     environment:
-      - TZ=America/Los_Angeles
+      - TZ=${TZ:-America/Los_Angeles}
+    depends_on:
+      - orthanc
     restart: always
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
+  # ─────────────────────────────────────────────────────────────────────────────
+  # POSTGRESQL - Database for Orthanc index and routing state
+  # ─────────────────────────────────────────────────────────────────────────────
+  orthanc-db:
+    image: postgres:15
+    container_name: orthanc-postgres
+    ports:
+      - "${POSTGRES_PORT:-8043}:5432"
+    environment:
+      - POSTGRES_DB=orthanc
+      - POSTGRES_USER=${POSTGRES_USER:-orthanc}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-orthanc}
+      - TZ=${TZ:-America/Los_Angeles}
+    volumes:
+      - orthanc-db-data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-orthanc} -d orthanc"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECRETS
+# ═══════════════════════════════════════════════════════════════════════════════
 secrets:
   orthanc.json:
-    file: orthanc.json
+    file: ./config/orthanc.json
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# NETWORKS
+# ═══════════════════════════════════════════════════════════════════════════════
 networks:
   default:
     driver: bridge
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# VOLUMES
+# ═══════════════════════════════════════════════════════════════════════════════
 volumes:
   orthanc-storage:
     driver: local
     driver_opts:
       type: 'none'
       o: 'bind'
-      device: '/opt/orthanc/orthanc-storage'
-  
+      device: '${DICOM_STORAGE:-./data/dicom}'
+
   orthanc-db-data:
     driver: local
     driver_opts:
       type: 'none'
       o: 'bind'
-      device: '/opt/orthanc/postgres-data'
+      device: '${POSTGRES_STORAGE:-./data/postgres}'
