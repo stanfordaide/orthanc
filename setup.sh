@@ -39,6 +39,8 @@ ORTHANC_PASSWORD=""
 POSTGRES_PASSWORD=""
 USE_DEFAULTS=false
 NON_INTERACTIVE=false
+USE_EXISTING=false
+FORCE_SETUP=false
 
 # ─────────────────────────────────────────────────────────────────────────────────
 # HELPERS
@@ -155,6 +157,7 @@ OPTIONS:
   --db-pass PWD       PostgreSQL password (default: auto-generate)
   --defaults          Use all default values (non-interactive)
   --non-interactive   Skip all prompts
+  --force             Overwrite existing configuration without prompting
   -h, --help          Show this help
 
 EXAMPLES:
@@ -162,6 +165,11 @@ EXAMPLES:
   $0 --defaults                               # Quick setup with defaults
   $0 --dicom /mnt/nas/orthanc/dicom           # Custom DICOM storage
   $0 --dicom /data/dicom --db /data/postgres  # Custom paths for both
+  $0 --force --defaults                       # Re-setup without prompts
+
+RE-RUNNING SETUP:
+  It's safe to run setup again on an existing installation.
+  You'll be prompted to update or keep the existing configuration.
 
 ENVIRONMENT VARIABLES:
   You can also set these before running:
@@ -206,6 +214,11 @@ parse_args() {
                 NON_INTERACTIVE=true
                 shift
                 ;;
+            --force)
+                FORCE_SETUP=true
+                NON_INTERACTIVE=true
+                shift
+                ;;
             -h|--help)
                 show_usage
                 exit 0
@@ -227,10 +240,101 @@ parse_args() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────────
+# EXISTING INSTALLATION CHECK
+# ─────────────────────────────────────────────────────────────────────────────────
+
+check_existing() {
+    # Skip check if force flag is set
+    if [[ "$FORCE_SETUP" == true ]]; then
+        log_info "Force mode: stopping any existing containers..."
+        docker compose down 2>/dev/null || true
+        return 0
+    fi
+    
+    local has_env=false
+    local has_containers=false
+    local has_data=false
+    
+    [[ -f ".env" ]] && has_env=true
+    docker compose ps --quiet 2>/dev/null | grep -q . && has_containers=true
+    [[ -d "$DEFAULT_DICOM_STORAGE" ]] || [[ -d "$DEFAULT_POSTGRES_STORAGE" ]] && has_data=true
+    
+    if [[ "$has_env" == true ]] || [[ "$has_containers" == true ]]; then
+        echo
+        echo -e "${YELLOW}╔═══════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${YELLOW}║  ⚠️  EXISTING INSTALLATION DETECTED                           ║${NC}"
+        echo -e "${YELLOW}╚═══════════════════════════════════════════════════════════════╝${NC}"
+        echo
+        
+        if [[ "$has_env" == true ]]; then
+            echo -e "  ${CYAN}Found:${NC} .env configuration file"
+            # Load existing values
+            source .env 2>/dev/null || true
+            echo "         DICOM_STORAGE=$DICOM_STORAGE"
+            echo "         POSTGRES_STORAGE=$POSTGRES_STORAGE"
+            echo "         ORTHANC_AET=$ORTHANC_AET"
+        fi
+        
+        if [[ "$has_containers" == true ]]; then
+            echo -e "  ${CYAN}Found:${NC} Running Docker containers"
+            docker compose ps --format "table {{.Name}}\t{{.Status}}" 2>/dev/null | head -5
+        fi
+        
+        echo
+        
+        if [[ "$NON_INTERACTIVE" == true ]]; then
+            log_info "Non-interactive mode: will update configuration"
+            return 0
+        fi
+        
+        echo "What would you like to do?"
+        echo "  1) Update configuration (keeps existing data)"
+        echo "  2) Keep existing configuration (just verify/start)"
+        echo "  3) Cancel"
+        echo
+        read -p "Choice [1-3]: " choice
+        
+        case "$choice" in
+            1)
+                log_info "Will update configuration..."
+                # Stop containers before updating
+                if [[ "$has_containers" == true ]]; then
+                    log_info "Stopping existing containers..."
+                    docker compose down 2>/dev/null || true
+                fi
+                return 0
+                ;;
+            2)
+                log_info "Keeping existing configuration..."
+                # Use existing values as defaults
+                DICOM_STORAGE="${DICOM_STORAGE:-$DEFAULT_DICOM_STORAGE}"
+                POSTGRES_STORAGE="${POSTGRES_STORAGE:-$DEFAULT_POSTGRES_STORAGE}"
+                ORTHANC_AET="${ORTHANC_AET:-$DEFAULT_ORTHANC_AET}"
+                ORTHANC_PASSWORD="${ORTHANC_PASSWORD:-$DEFAULT_ORTHANC_PASSWORD}"
+                POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-}"
+                USE_EXISTING=true
+                return 0
+                ;;
+            3|*)
+                echo "Setup cancelled."
+                exit 0
+                ;;
+        esac
+    fi
+    
+    return 0
+}
+
+# ─────────────────────────────────────────────────────────────────────────────────
 # MAIN SETUP
 # ─────────────────────────────────────────────────────────────────────────────────
 
 collect_config() {
+    # If using existing config, skip collection
+    if [[ "$USE_EXISTING" == true ]]; then
+        return
+    fi
+    
     if [[ "$USE_DEFAULTS" == true ]]; then
         DICOM_STORAGE="${DICOM_STORAGE:-$DEFAULT_DICOM_STORAGE}"
         POSTGRES_STORAGE="${POSTGRES_STORAGE:-$DEFAULT_POSTGRES_STORAGE}"
@@ -462,6 +566,7 @@ main() {
     parse_args "$@"
     
     print_banner
+    check_existing
     collect_config
     show_summary
     

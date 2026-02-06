@@ -10,7 +10,7 @@
 #
 # ═══════════════════════════════════════════════════════════════════════════════
 
-.PHONY: help setup install quick-setup start stop restart logs status clean upgrade backup
+.PHONY: help setup install quick-setup start stop restart logs status clean reset uninstall upgrade backup
 
 # Overridable variables with defaults
 DICOM_STORAGE ?= /opt/orthanc/orthanc-storage
@@ -25,7 +25,7 @@ help:
 	@echo "🏥 ORTHANC MANAGEMENT"
 	@echo ""
 	@echo "SETUP"
-	@echo "  make setup                  Interactive setup wizard"
+	@echo "  make setup                  Interactive setup wizard (safe to re-run)"
 	@echo "  make quick-setup            Quick setup with defaults"
 	@echo "  make setup DICOM_STORAGE=/path POSTGRES_STORAGE=/path"
 	@echo "                              Setup with custom paths"
@@ -40,7 +40,9 @@ help:
 	@echo "MAINTENANCE"
 	@echo "  make upgrade                Pull latest images and restart"
 	@echo "  make backup                 Create backup (not implemented)"
-	@echo "  make clean                  Remove containers (keep data)"
+	@echo "  make clean                  Remove containers (keeps data)"
+	@echo "  make reset                  Reset config (keeps data, regenerates .env)"
+	@echo "  make uninstall              Remove everything (DANGER: deletes all data!)"
 	@echo ""
 	@echo "PORTS (defaults)"
 	@echo "  8040  Operator Dashboard"
@@ -52,8 +54,11 @@ help:
 	@echo "  # First time setup with custom NAS storage:"
 	@echo "  make setup DICOM_STORAGE=/mnt/nas/orthanc/dicom"
 	@echo ""
-	@echo "  # Quick setup with local storage:"
-	@echo "  make quick-setup"
+	@echo "  # Re-run setup to change paths (keeps existing data):"
+	@echo "  make setup"
+	@echo ""
+	@echo "  # Complete uninstall (removes all data!):"
+	@echo "  make uninstall"
 
 # ─────────────────────────────────────────────────────────────────────────────────
 # SETUP
@@ -131,6 +136,39 @@ clean:
 	@echo "Data locations:"
 	@echo "  DICOM:    $(DICOM_STORAGE)"
 	@echo "  Postgres: $(POSTGRES_STORAGE)"
+
+reset:
+	@echo "🔄 Resetting configuration..."
+	@docker compose down 2>/dev/null || true
+	@rm -f .env
+	@echo "✅ Configuration reset. Data preserved."
+	@echo ""
+	@echo "Run 'make setup' to reconfigure."
+
+uninstall:
+	@echo ""
+	@echo "⚠️  WARNING: This will permanently delete:"
+	@echo "    - All Docker containers and volumes"
+	@echo "    - Configuration file (.env)"
+	@echo "    - DICOM storage: $(DICOM_STORAGE)"
+	@echo "    - PostgreSQL data: $(POSTGRES_STORAGE)"
+	@echo ""
+	@read -p "Are you sure? Type 'yes' to confirm: " confirm && \
+	if [ "$$confirm" = "yes" ]; then \
+		echo ""; \
+		echo "🗑️  Stopping and removing containers..."; \
+		docker compose down -v --remove-orphans 2>/dev/null || true; \
+		echo "🗑️  Removing configuration..."; \
+		rm -f .env; \
+		echo "🗑️  Removing DICOM storage..."; \
+		sudo rm -rf "$(DICOM_STORAGE)" 2>/dev/null || rm -rf "$(DICOM_STORAGE)" 2>/dev/null || echo "    (could not remove, may need manual deletion)"; \
+		echo "🗑️  Removing PostgreSQL data..."; \
+		sudo rm -rf "$(POSTGRES_STORAGE)" 2>/dev/null || rm -rf "$(POSTGRES_STORAGE)" 2>/dev/null || echo "    (could not remove, may need manual deletion)"; \
+		echo ""; \
+		echo "✅ Uninstall complete."; \
+	else \
+		echo "Cancelled."; \
+	fi
 
 # ─────────────────────────────────────────────────────────────────────────────────
 # DEVELOPMENT
