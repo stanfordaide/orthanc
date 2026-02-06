@@ -165,16 +165,22 @@
                         <h2 class="font-semibold flex items-center gap-2">
                             <span class="text-xl">🌐</span> DICOM Destinations
                         </h2>
-                        <button @click="openAddDestination()" 
-                                class="text-xs px-3 py-1 bg-midnight-700 rounded hover:bg-midnight-600 border border-midnight-600 hover:border-neon-blue transition-all">
-                            + Add
-                        </button>
+                        <div class="flex gap-2">
+                            <button @click="testAllDestinations()" 
+                                    class="text-xs px-3 py-1 bg-midnight-700 rounded hover:bg-midnight-600 border border-midnight-600 hover:border-neon-green transition-all">
+                                Test All
+                            </button>
+                            <button @click="openAddDestination()" 
+                                    class="text-xs px-3 py-1 bg-midnight-700 rounded hover:bg-midnight-600 border border-midnight-600 hover:border-neon-blue transition-all">
+                                + Add
+                            </button>
+                        </div>
                     </div>
                     <div class="divide-y divide-midnight-700">
                         <template x-for="dest in destinations" :key="dest.name">
                             <div class="px-5 py-3 flex items-center justify-between hover:bg-midnight-700/50 transition-colors group">
                                 <div class="flex items-center gap-3">
-                                    <span class="text-xl" x-text="dest.status === 'online' ? '✅' : dest.status === 'slow' ? '⚠️' : '❌'"></span>
+                                    <span class="text-xl" x-text="dest.status === 'online' ? '✅' : dest.status === 'slow' ? '⚠️' : dest.status === 'offline' ? '❌' : '❔'"></span>
                                     <div>
                                         <div class="font-medium font-mono text-sm" x-text="dest.name"></div>
                                         <div class="text-xs text-slate-500" x-text="dest.aet + ' @ ' + dest.host + ':' + dest.port"></div>
@@ -770,16 +776,18 @@ function dashboard() {
                 // Update all at once for better reactivity
                 this.destinations = newDestinations;
                 
-                // Test connectivity in background (don't block UI, don't modify array)
-                this.testAllDestinationsInBackground();
+                // Don't auto-test - let user click "Test" button
+                // This prevents status from resetting unexpectedly
                 
             } catch (e) {
                 console.error('Failed to load destinations:', e);
             }
         },
         
-        async testAllDestinationsInBackground() {
-            // Test each destination and update the full array to trigger reactivity
+        async testAllDestinations() {
+            this.toast('Testing all destinations...', 'info');
+            let online = 0, offline = 0;
+            
             for (const dest of this.destinations) {
                 try {
                     const start = Date.now();
@@ -792,15 +800,20 @@ function dashboard() {
                         const ms = Date.now() - start;
                         dest.responseTime = ms;
                         dest.status = ms > 1000 ? 'slow' : 'online';
+                        online++;
                     } else {
                         dest.status = 'offline';
+                        offline++;
                     }
                 } catch {
                     dest.status = 'offline';
+                    offline++;
                 }
-                // Force reactivity update by reassigning array
+                // Force reactivity update after each test
                 this.destinations = [...this.destinations];
             }
+            
+            this.toast(`Testing complete: ${online} online, ${offline} offline`, online > 0 ? 'success' : 'error');
         },
         
         async loadRecentStudies() {
