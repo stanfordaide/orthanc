@@ -1,6 +1,6 @@
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- PIPELINE TRACKER - Track study journey through AI processing pipeline
--- Uses job polling for accurate send completion tracking
+-- Simple approach: track when queued (Orthanc jobs rarely fail after queueing)
 -- ═══════════════════════════════════════════════════════════════════════════════
 TRACKING_API = "http://routing-api:5000"
 
@@ -27,29 +27,17 @@ function TrackAIResultsReceived(studyId)
     print("[TRACK] AI results received for: " .. studyId)
 end
 
--- Register a job for background polling (tracks actual completion)
-function TrackJob(jobId, studyId, destination)
-    pcall(function()
-        HttpPost(TRACKING_API .. "/track/job", DumpJson({
-            job_id = jobId,
-            study_id = studyId,
-            destination = destination
-        }), { ["Content-Type"] = "application/json" })
-    end)
-    print("[TRACK] Job " .. jobId .. " registered for " .. destination .. " (will poll for completion)")
-end
-
--- Track immediate failure (when job couldn't even be queued)
-function TrackFailure(studyId, destination, errorMsg)
+-- Track send attempt (success = job was queued, failure = couldn't queue)
+function TrackSend(studyId, destination, success, errorMsg)
     pcall(function()
         HttpPost(TRACKING_API .. "/track/destination", DumpJson({
             study_id = studyId,
             destination = destination,
-            success = false,
+            success = success,
             error = errorMsg
         }), { ["Content-Type"] = "application/json" })
     end)
-    print("[TRACK] " .. destination .. ": FAILED - " .. (errorMsg or "unknown error"))
+    print("[TRACK] " .. destination .. ": " .. (success and "OK" or ("FAILED - " .. (errorMsg or "unknown"))))
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -360,17 +348,17 @@ function OnStableStudy(studyId, tags, metadata, origin)
                         elseif modality == 'SR' then
                             print('   ✓ Detected Structured Report - routing to MODLINK')
                             
-                            -- Route to MODLINK (track via job polling)
+                            -- Route to MODLINK
                             local success1, job1 = pcall(function()
                                 return SendToModality(instance['ID'], 'MODLINK')
                             end)
                             
                             if success1 and job1 then
-                                print('      ⏳ Queued to MODLINK (Job: ' .. tostring(job1) .. ')')
-                                TrackJob(job1, studyId, 'MODLINK')
+                                print('      ✓ Queued to MODLINK (Job: ' .. tostring(job1) .. ')')
+                                TrackSend(studyId, 'MODLINK', true, nil)
                             else
                                 print('      ✗ FAILED to queue to MODLINK - Error: ' .. tostring(job1))
-                                TrackFailure(studyId, 'MODLINK', 'Queue failed: ' .. tostring(job1))
+                                TrackSend(studyId, 'MODLINK', false, tostring(job1))
                             end
                             
                             -- Mark as processed after routing
@@ -418,15 +406,14 @@ function OnStableStudy(studyId, tags, metadata, origin)
         end)
         
         if success and job then
-            print('   ⏳ Highest resolution instance queued for MERCURE (Job: ' .. tostring(job) .. ')')
-            print('AUTO-FORWARD: Bone length study (highest res) queued to MERCURE - Patient: ' .. 
+            print('   ✓ Highest resolution instance queued for MERCURE (Job: ' .. tostring(job) .. ')')
+            print('AUTO-FORWARD: Bone length study (highest res) sent to MERCURE - Patient: ' .. 
                       patientName .. ', Study: ' .. studyId .. ', Job: ' .. tostring(job))
-            -- Track via job polling for accurate completion status
-            TrackJob(job, studyId, 'MERCURE')
+            TrackSend(studyId, 'MERCURE', true, nil)
         else
-            print('   ✗ FAILED to queue to MERCURE - Error: ' .. tostring(job))
-            print('AUTO-FORWARD FAILED: Could not queue to MERCURE - Study: ' .. studyId)
-            TrackFailure(studyId, 'MERCURE', 'Queue failed: ' .. tostring(job))
+            print('   ✗ FAILED to send to MERCURE - Error: ' .. tostring(job))
+            print('AUTO-FORWARD FAILED: Could not send to MERCURE - Study: ' .. studyId)
+            TrackSend(studyId, 'MERCURE', false, tostring(job))
         end
     else
         print('   ⚠ No valid instance found with matrix dimensions')

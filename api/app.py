@@ -289,34 +289,43 @@ def track_ai_results():
 
 @app.route('/track/destination', methods=['POST'])
 def track_destination():
-    """Record destination send attempt (immediate, no job tracking)"""
+    """Record destination send attempt"""
     data = request.json or {}
     study_id = data.get('study_id')
     destination = data.get('destination', '').upper()
     success = data.get('success', False)
     error = data.get('error')
     
-    # Map destination to column prefix
-    col_map = {
-        'LPCHROUTER': 'lpch',
-        'LPCH': 'lpch',
-        'LPCHTROUTER': 'lpcht',
-        'LPCHT': 'lpcht',
-        'MODLINK': 'modlink'
-    }
-    
-    prefix = col_map.get(destination)
-    if not prefix:
-        return jsonify({'error': f'Unknown destination: {destination}'}), 400
-    
     conn = get_db()
     cur = conn.cursor()
     
-    cur.execute(f"""
-        UPDATE study_workflows 
-        SET {prefix}_sent_at = NOW(), {prefix}_send_success = %s, {prefix}_send_error = %s, updated_at = NOW()
-        WHERE study_id = %s
-    """, (success, error, study_id))
+    # Handle MERCURE separately
+    if destination == 'MERCURE':
+        cur.execute("""
+            UPDATE study_workflows 
+            SET mercure_sent_at = NOW(), mercure_send_success = %s, mercure_send_error = %s, updated_at = NOW()
+            WHERE study_id = %s
+        """, (success, error, study_id))
+    else:
+        # Map destination to column prefix
+        col_map = {
+            'LPCHROUTER': 'lpch',
+            'LPCH': 'lpch',
+            'LPCHTROUTER': 'lpcht',
+            'LPCHT': 'lpcht',
+            'MODLINK': 'modlink'
+        }
+        
+        prefix = col_map.get(destination)
+        if not prefix:
+            conn.close()
+            return jsonify({'error': f'Unknown destination: {destination}'}), 400
+        
+        cur.execute(f"""
+            UPDATE study_workflows 
+            SET {prefix}_sent_at = NOW(), {prefix}_send_success = %s, {prefix}_send_error = %s, updated_at = NOW()
+            WHERE study_id = %s
+        """, (success, error, study_id))
     
     conn.commit()
     cur.close()
