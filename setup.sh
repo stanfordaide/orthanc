@@ -628,26 +628,87 @@ make_executable() {
     chmod +x setup.sh 2>/dev/null || true
 }
 
+start_services() {
+    log_info "Starting Docker services..."
+    docker compose up -d
+    
+    log_info "Waiting for Orthanc to be healthy..."
+    local max_attempts=30
+    local attempt=0
+    
+    while [[ $attempt -lt $max_attempts ]]; do
+        if curl -s -u "orthanc_admin:$ORTHANC_PASSWORD" "http://localhost:8041/system" &>/dev/null; then
+            log_success "Orthanc is healthy"
+            return 0
+        fi
+        attempt=$((attempt + 1))
+        echo -n "."
+        sleep 2
+    done
+    
+    echo
+    log_warn "Orthanc may still be starting. Check with: docker compose ps"
+    return 1
+}
+
+seed_modalities() {
+    log_info "Configuring default DICOM modalities..."
+    
+    local orthanc_url="http://localhost:8041"
+    local auth="orthanc_admin:$ORTHANC_PASSWORD"
+    
+    # Check if modalities already exist
+    local existing=$(curl -s -u "$auth" "$orthanc_url/modalities" 2>/dev/null)
+    if [[ "$existing" != "[]" ]] && [[ -n "$existing" ]]; then
+        log_info "Modalities already configured, skipping seed"
+        return 0
+    fi
+    
+    # Define default modalities (from your original config)
+    # Format: NAME|AET|HOST|PORT
+    local modalities=(
+        "MERCURE|orthanc|172.17.0.1|11112"
+        "LPCHROUTER|LPCHROUTER|10.50.133.21|4000"
+        "LPCHTROUTER|LPCHTROUTER|10.50.130.114|4000"
+        "MODLINK|PSRTBONEAPP01|10.251.201.59|104"
+    )
+    
+    for modality in "${modalities[@]}"; do
+        IFS='|' read -r name aet host port <<< "$modality"
+        
+        local config="{\"AET\":\"$aet\",\"Host\":\"$host\",\"Port\":$port}"
+        
+        if curl -s -u "$auth" -X PUT "$orthanc_url/modalities/$name" \
+            -H "Content-Type: application/json" \
+            -d "$config" &>/dev/null; then
+            log_success "Added modality: $name ($aet @ $host:$port)"
+        else
+            log_warn "Failed to add modality: $name"
+        fi
+    done
+}
+
 print_completion() {
     echo
     echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║                                                               ║${NC}"
-    echo -e "${GREEN}║   ✅  SETUP COMPLETE                                          ║${NC}"
+    echo -e "${GREEN}║   ✅  SETUP COMPLETE - SERVICES RUNNING                       ║${NC}"
     echo -e "${GREEN}║                                                               ║${NC}"
     echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo
-    echo -e "${CYAN}Next steps:${NC}"
+    echo -e "${CYAN}Access your Orthanc installation:${NC}"
     echo
-    echo "  1. Start services:"
-    echo -e "     ${YELLOW}docker compose up -d${NC}"
+    echo -e "  📊 Dashboard:    ${YELLOW}http://localhost:8040${NC}"
+    echo -e "  🏥 Orthanc UI:   ${YELLOW}http://localhost:8041${NC}"
+    echo -e "  🖼️  OHIF Viewer:  ${YELLOW}http://localhost:8042${NC}"
+    echo -e "  📡 DICOM Port:   ${YELLOW}$ORTHANC_AET @ port 4242${NC}"
     echo
-    echo "  2. Open the dashboard:"
-    echo -e "     ${YELLOW}http://localhost:8040${NC}"
+    echo -e "${CYAN}CLI commands:${NC}"
+    echo -e "  ${YELLOW}./orthanc status${NC}       - Check system status"
+    echo -e "  ${YELLOW}./orthanc studies${NC}      - List recent studies"
+    echo -e "  ${YELLOW}./orthanc destinations${NC} - List DICOM destinations"
     echo
-    echo "  3. Or use the CLI:"
-    echo -e "     ${YELLOW}./orthanc status${NC}"
-    echo
-    echo -e "${CYAN}Credentials saved in .env${NC}"
+    echo -e "${CYAN}Credentials (saved in .env):${NC}"
     echo "  Orthanc:    orthanc_admin / $ORTHANC_PASSWORD"
     echo "  PostgreSQL: orthanc / $POSTGRES_PASSWORD"
     echo
@@ -686,6 +747,13 @@ main() {
     update_orthanc_json
     create_directories
     make_executable
+    
+    # Start services and configure
+    start_services
+    if [[ $? -eq 0 ]]; then
+        seed_modalities
+    fi
+    
     print_completion
 }
 
