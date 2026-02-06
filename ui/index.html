@@ -741,6 +741,15 @@ function dashboard() {
             try {
                 const names = await this.api('/modalities');
                 
+                // Preserve existing statuses
+                const existingStatuses = {};
+                for (const dest of this.destinations) {
+                    existingStatuses[dest.name] = { 
+                        status: dest.status, 
+                        responseTime: dest.responseTime 
+                    };
+                }
+                
                 // Build all destinations first
                 const newDestinations = [];
                 for (const name of names) {
@@ -754,6 +763,9 @@ function dashboard() {
                         const port = isArray ? config[2] : config.Port;
                         const manufacturer = isArray ? (config[3] || '') : (config.Manufacturer || '');
                         
+                        // Restore previous status if exists
+                        const existing = existingStatuses[name];
+                        
                         newDestinations.push({
                             name,
                             aet,
@@ -765,8 +777,8 @@ function dashboard() {
                             allowFind: isArray || config.AllowFind !== false,
                             allowGet: isArray || config.AllowGet !== false,
                             allowMove: isArray || config.AllowMove !== false,
-                            status: 'unknown',
-                            responseTime: null,
+                            status: existing?.status || 'unknown',
+                            responseTime: existing?.responseTime || null,
                         });
                     } catch (e) {
                         console.error(`Failed to load destination ${name}:`, e);
@@ -775,9 +787,6 @@ function dashboard() {
                 
                 // Update all at once for better reactivity
                 this.destinations = newDestinations;
-                
-                // Don't auto-test - let user click "Test" button
-                // This prevents status from resetting unexpectedly
                 
             } catch (e) {
                 console.error('Failed to load destinations:', e);
