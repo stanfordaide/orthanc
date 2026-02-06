@@ -63,6 +63,8 @@ services:
     depends_on:
       orthanc-db:
         condition: service_healthy
+      routing-api:
+        condition: service_healthy
     restart: always
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8042/system"]
@@ -140,8 +142,8 @@ services:
     depends_on:
       orthanc-db:
         condition: service_healthy
-      orthanc:
-        condition: service_healthy
+      # Note: Don't depend on orthanc - causes circular dependency
+      # routing-api should start before orthanc so Lua can call it
     restart: always
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:5000/health"]
