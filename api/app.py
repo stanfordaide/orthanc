@@ -365,69 +365,87 @@ def get_funnel():
     
     # Build funnel data structure
     total = stats['total_studies'] or 0
+    ai_received = stats['ai_results_received'] or 0
     
-    def pct(n):
-        return round(n / total * 100, 1) if total > 0 else 0
+    def pct(n, base=None):
+        base = base if base is not None else total
+        return round(n / base * 100, 1) if base > 0 else 0
+    
+    # Calculate aggregate routing stats (any destination attempted after AI results)
+    destinations_attempted = ai_received  # All studies with AI results should be routed
+    destinations_all_success = stats['fully_complete'] or 0
+    destinations_any_failed = (
+        (stats['lpch_sent_failed'] or 0) + 
+        (stats['lpcht_sent_failed'] or 0) + 
+        (stats['modlink_sent_failed'] or 0)
+    )
     
     funnel = {
         'time_range_hours': hours,
         'total_studies': total,
         
-        'stages': [
+        # Main pipeline stages (top-level)
+        'pipeline': [
             {
                 'name': 'Studies Received',
                 'count': total,
-                'percent': 100
+                'percent': 100,
+                'status': 'neutral'
             },
             {
                 'name': 'Sent to MERCURE',
                 'count': stats['mercure_sent_ok'] or 0,
                 'percent': pct(stats['mercure_sent_ok'] or 0),
                 'failed': stats['mercure_sent_failed'] or 0,
-                'failed_reason': 'Send failed'
+                'status': 'success' if (stats['mercure_sent_failed'] or 0) == 0 else 'warning'
             },
             {
-                'name': 'AI Results Received',
-                'count': stats['ai_results_received'] or 0,
-                'percent': pct(stats['ai_results_received'] or 0),
+                'name': 'AI Results Back',
+                'count': ai_received,
+                'percent': pct(ai_received),
                 'waiting': stats['ai_results_waiting'] or 0,
-                'waiting_reason': 'Waiting for MERCURE response'
+                'status': 'success' if (stats['ai_results_waiting'] or 0) == 0 else 'waiting'
             },
             {
-                'name': 'Routed to LPCH',
-                'count': stats['lpch_sent_ok'] or 0,
-                'percent': pct(stats['lpch_sent_ok'] or 0),
-                'failed': stats['lpch_sent_failed'] or 0
-            },
-            {
-                'name': 'Routed to LPCHT',
-                'count': stats['lpcht_sent_ok'] or 0,
-                'percent': pct(stats['lpcht_sent_ok'] or 0),
-                'failed': stats['lpcht_sent_failed'] or 0
-            },
-            {
-                'name': 'Routed to MODLINK',
-                'count': stats['modlink_sent_ok'] or 0,
-                'percent': pct(stats['modlink_sent_ok'] or 0),
-                'failed': stats['modlink_sent_failed'] or 0
-            },
-            {
-                'name': 'Fully Complete',
-                'count': stats['fully_complete'] or 0,
-                'percent': pct(stats['fully_complete'] or 0)
+                'name': 'Routed to Destinations',
+                'count': destinations_all_success,
+                'percent': pct(destinations_all_success, ai_received),
+                'base_count': ai_received,
+                'failed': destinations_any_failed,
+                'status': 'success' if destinations_any_failed == 0 and ai_received > 0 else ('warning' if destinations_any_failed > 0 else 'neutral'),
+                # Children destinations
+                'children': [
+                    {
+                        'name': 'LPCH',
+                        'count': stats['lpch_sent_ok'] or 0,
+                        'percent': pct(stats['lpch_sent_ok'] or 0, ai_received),
+                        'failed': stats['lpch_sent_failed'] or 0
+                    },
+                    {
+                        'name': 'LPCHT',
+                        'count': stats['lpcht_sent_ok'] or 0,
+                        'percent': pct(stats['lpcht_sent_ok'] or 0, ai_received),
+                        'failed': stats['lpcht_sent_failed'] or 0
+                    },
+                    {
+                        'name': 'MODLINK',
+                        'count': stats['modlink_sent_ok'] or 0,
+                        'percent': pct(stats['modlink_sent_ok'] or 0, ai_received),
+                        'failed': stats['modlink_sent_failed'] or 0
+                    }
+                ]
             }
         ],
         
         # Summary metrics
         'summary': {
-            'mercure_success_rate': round((stats['ai_results_received'] or 0) / (stats['mercure_sent_ok'] or 1) * 100, 1) if stats['mercure_sent_ok'] else None,
+            'mercure_success_rate': pct(ai_received, stats['mercure_sent_ok'] or 1),
+            'routing_success_rate': pct(destinations_all_success, ai_received),
             'overall_success_rate': pct(stats['fully_complete'] or 0),
             'drop_off': {
                 'mercure_send': stats['mercure_sent_failed'] or 0,
                 'ai_no_response': stats['ai_results_waiting'] or 0,
-                'lpch_failed': stats['lpch_sent_failed'] or 0,
-                'lpcht_failed': stats['lpcht_sent_failed'] or 0,
-                'modlink_failed': stats['modlink_sent_failed'] or 0
+                'routing_failed': destinations_any_failed
             }
         }
     }

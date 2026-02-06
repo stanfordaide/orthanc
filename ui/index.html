@@ -317,76 +317,93 @@
                 <div x-show="funnel" class="mb-6">
                     <!-- Summary Cards -->
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                        <div class="bg-gradient-to-br from-indigo-900/50 to-indigo-950/50 border border-indigo-700/30 rounded-lg p-4 text-center">
-                            <div class="text-3xl font-bold text-indigo-300" x-text="funnel?.total_studies || 0"></div>
-                            <div class="text-xs text-indigo-400/70 mt-1 uppercase tracking-wide">Studies Received</div>
+                        <div class="bg-midnight-700 border border-midnight-600 rounded-lg p-4 text-center">
+                            <div class="text-3xl font-bold text-white" x-text="funnel?.total_studies || 0"></div>
+                            <div class="text-xs text-slate-400 mt-1 uppercase tracking-wide">Studies Received</div>
                         </div>
-                        <div class="bg-gradient-to-br from-fuchsia-900/50 to-fuchsia-950/50 border border-fuchsia-700/30 rounded-lg p-4 text-center">
-                            <div class="text-3xl font-bold text-fuchsia-300" x-text="funnel?.stages?.[2]?.count || 0"></div>
-                            <div class="text-xs text-fuchsia-400/70 mt-1 uppercase tracking-wide">AI Results Back</div>
+                        <div class="bg-midnight-700 border border-midnight-600 rounded-lg p-4 text-center">
+                            <div class="text-3xl font-bold text-white" x-text="funnel?.pipeline?.[2]?.count || 0"></div>
+                            <div class="text-xs text-slate-400 mt-1 uppercase tracking-wide">AI Results Back</div>
                         </div>
-                        <div class="bg-gradient-to-br from-emerald-900/50 to-emerald-950/50 border border-emerald-700/30 rounded-lg p-4 text-center">
-                            <div class="text-3xl font-bold text-emerald-300" x-text="funnel?.stages?.[6]?.count || 0"></div>
-                            <div class="text-xs text-emerald-400/70 mt-1 uppercase tracking-wide">Fully Complete</div>
+                        <div class="bg-midnight-700 border border-midnight-600 rounded-lg p-4 text-center">
+                            <div class="text-3xl font-bold text-emerald-400" x-text="funnel?.pipeline?.[3]?.count || 0"></div>
+                            <div class="text-xs text-slate-400 mt-1 uppercase tracking-wide">Fully Routed</div>
                         </div>
-                        <div class="rounded-lg p-4 text-center border"
-                             :class="(funnel?.summary?.overall_success_rate || 0) >= 90 ? 'bg-gradient-to-br from-emerald-900/50 to-emerald-950/50 border-emerald-700/30' : 
-                                     (funnel?.summary?.overall_success_rate || 0) >= 50 ? 'bg-gradient-to-br from-amber-900/50 to-amber-950/50 border-amber-700/30' : 
-                                     'bg-gradient-to-br from-red-900/50 to-red-950/50 border-red-700/30'">
+                        <div class="bg-midnight-700 border border-midnight-600 rounded-lg p-4 text-center">
                             <div class="text-3xl font-bold"
-                                 :class="(funnel?.summary?.overall_success_rate || 0) >= 90 ? 'text-emerald-300' : 
-                                         (funnel?.summary?.overall_success_rate || 0) >= 50 ? 'text-amber-300' : 'text-red-300'"
+                                 :class="(funnel?.summary?.overall_success_rate || 0) >= 90 ? 'text-emerald-400' : 
+                                         (funnel?.summary?.overall_success_rate || 0) >= 50 ? 'text-amber-400' : 'text-red-400'"
                                  x-text="(funnel?.summary?.overall_success_rate || 0) + '%'"></div>
-                            <div class="text-xs mt-1 uppercase tracking-wide"
-                                 :class="(funnel?.summary?.overall_success_rate || 0) >= 90 ? 'text-emerald-400/70' : 
-                                         (funnel?.summary?.overall_success_rate || 0) >= 50 ? 'text-amber-400/70' : 'text-red-400/70'">Success Rate</div>
+                            <div class="text-xs text-slate-400 mt-1 uppercase tracking-wide">Success Rate</div>
                         </div>
                     </div>
                     
-                    <!-- Funnel Bars -->
-                    <div class="space-y-2">
-                        <template x-for="(stage, idx) in funnel?.stages || []" :key="stage.name">
-                            <div class="flex items-center gap-3">
-                                <div class="w-32 text-xs text-slate-300 text-right font-medium" x-text="stage.name"></div>
-                                <div class="flex-1 relative">
-                                    <div class="h-8 rounded-md overflow-hidden bg-slate-800/50 border border-slate-700/50">
-                                        <div class="h-full rounded-md transition-all duration-500"
-                                             :style="'width: ' + stage.percent + '%'"
-                                             :class="getFunnelBarColor(stage.name)">
+                    <!-- Main Pipeline (hierarchical) -->
+                    <div class="space-y-3">
+                        <template x-for="(stage, idx) in funnel?.pipeline || []" :key="stage.name">
+                            <div>
+                                <!-- Main stage bar -->
+                                <div class="flex items-center gap-3">
+                                    <div class="w-40 text-sm text-slate-300 text-right font-medium" x-text="stage.name"></div>
+                                    <div class="flex-1 relative">
+                                        <div class="h-7 rounded bg-slate-800/50 border border-slate-700/50 overflow-hidden">
+                                            <div class="h-full transition-all duration-500"
+                                                 :style="'width: ' + stage.percent + '%'"
+                                                 :class="stage.name === 'Routed to Destinations' ? 'bg-emerald-600' : 'bg-slate-500'">
+                                            </div>
+                                        </div>
+                                        <div class="absolute inset-0 flex items-center justify-center text-xs font-medium text-white">
+                                            <span x-text="stage.count"></span>
+                                            <span class="text-slate-400 ml-1" x-text="'(' + stage.percent + '%)'"></span>
                                         </div>
                                     </div>
-                                    <div class="absolute inset-0 flex items-center justify-center text-xs font-semibold text-white drop-shadow-lg">
-                                        <span x-text="stage.count"></span>
-                                        <span class="text-slate-300 ml-1" x-text="'(' + stage.percent + '%)'"></span>
+                                    <div class="w-28 text-xs">
+                                        <span x-show="stage.failed" class="text-red-400" x-text="'−' + stage.failed + ' failed'"></span>
+                                        <span x-show="stage.waiting" class="text-amber-400" x-text="stage.waiting + ' waiting'"></span>
                                     </div>
                                 </div>
-                                <div class="w-28 text-xs">
-                                    <span x-show="stage.failed" class="text-red-400 font-medium" x-text="'−' + stage.failed + ' failed'"></span>
-                                    <span x-show="stage.waiting" class="text-amber-400 font-medium" x-text="stage.waiting + ' waiting'"></span>
-                                </div>
+                                
+                                <!-- Child destinations (indented) -->
+                                <template x-if="stage.children">
+                                    <div class="ml-44 mt-2 space-y-1 border-l-2 border-slate-700 pl-4">
+                                        <template x-for="child in stage.children" :key="child.name">
+                                            <div class="flex items-center gap-3">
+                                                <div class="w-20 text-xs text-slate-500 text-right" x-text="child.name"></div>
+                                                <div class="flex-1 relative">
+                                                    <div class="h-5 rounded bg-slate-800/30 border border-slate-700/30 overflow-hidden">
+                                                        <div class="h-full bg-slate-600 transition-all duration-500"
+                                                             :style="'width: ' + child.percent + '%'">
+                                                        </div>
+                                                    </div>
+                                                    <div class="absolute inset-0 flex items-center justify-center text-xs text-slate-300">
+                                                        <span x-text="child.count"></span>
+                                                        <span class="text-slate-500 ml-1" x-text="'(' + child.percent + '%)'"></span>
+                                                    </div>
+                                                </div>
+                                                <div class="w-20 text-xs">
+                                                    <span x-show="child.failed" class="text-red-400" x-text="'−' + child.failed"></span>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
                             </div>
                         </template>
                     </div>
                     
                     <!-- Drop-off Summary -->
-                    <div x-show="funnel?.summary?.drop_off" class="mt-4 p-4 bg-gradient-to-r from-red-950/30 to-transparent border border-red-900/30 rounded-lg">
-                        <div class="text-xs text-red-400 font-semibold mb-3 uppercase tracking-wide">⚠ Drop-off Points</div>
-                        <div class="flex flex-wrap gap-4 text-sm">
-                            <span x-show="funnel?.summary?.drop_off?.mercure_send" class="flex items-center gap-2 bg-red-900/30 px-3 py-1.5 rounded-full">
-                                <span class="w-2 h-2 rounded-full bg-red-500"></span>
-                                <span class="text-red-300">MERCURE send: <strong x-text="funnel?.summary?.drop_off?.mercure_send"></strong></span>
+                    <div x-show="funnel?.summary?.drop_off && (funnel.summary.drop_off.mercure_send || funnel.summary.drop_off.ai_no_response || funnel.summary.drop_off.routing_failed)" 
+                         class="mt-4 p-3 bg-midnight-700 border border-midnight-600 rounded-lg">
+                        <div class="text-xs text-slate-400 mb-2">Drop-off Points</div>
+                        <div class="flex flex-wrap gap-4 text-xs">
+                            <span x-show="funnel?.summary?.drop_off?.mercure_send" class="text-red-400">
+                                MERCURE send failed: <span x-text="funnel?.summary?.drop_off?.mercure_send"></span>
                             </span>
-                            <span x-show="funnel?.summary?.drop_off?.ai_no_response" class="flex items-center gap-2 bg-amber-900/30 px-3 py-1.5 rounded-full">
-                                <span class="w-2 h-2 rounded-full bg-amber-500"></span>
-                                <span class="text-amber-300">No AI response: <strong x-text="funnel?.summary?.drop_off?.ai_no_response"></strong></span>
+                            <span x-show="funnel?.summary?.drop_off?.ai_no_response" class="text-amber-400">
+                                Awaiting AI response: <span x-text="funnel?.summary?.drop_off?.ai_no_response"></span>
                             </span>
-                            <span x-show="funnel?.summary?.drop_off?.lpch_failed" class="flex items-center gap-2 bg-red-900/30 px-3 py-1.5 rounded-full">
-                                <span class="w-2 h-2 rounded-full bg-red-500"></span>
-                                <span class="text-red-300">LPCH failed: <strong x-text="funnel?.summary?.drop_off?.lpch_failed"></strong></span>
-                            </span>
-                            <span x-show="funnel?.summary?.drop_off?.modlink_failed" class="flex items-center gap-2 bg-red-900/30 px-3 py-1.5 rounded-full">
-                                <span class="w-2 h-2 rounded-full bg-red-500"></span>
-                                <span class="text-red-300">MODLINK failed: <strong x-text="funnel?.summary?.drop_off?.modlink_failed"></strong></span>
+                            <span x-show="funnel?.summary?.drop_off?.routing_failed" class="text-red-400">
+                                Routing failed: <span x-text="funnel?.summary?.drop_off?.routing_failed"></span>
                             </span>
                         </div>
                     </div>
@@ -1209,18 +1226,6 @@ function dashboard() {
             return new Date(timestamp).toLocaleDateString();
         },
 
-        getFunnelBarColor(stageName) {
-            const colors = {
-                'Studies Received': 'bg-gradient-to-r from-indigo-600 to-indigo-500',
-                'Sent to MERCURE': 'bg-gradient-to-r from-violet-600 to-violet-500',
-                'AI Results Received': 'bg-gradient-to-r from-fuchsia-600 to-fuchsia-500',
-                'Routed to LPCH': 'bg-gradient-to-r from-cyan-600 to-cyan-500',
-                'Routed to LPCHT': 'bg-gradient-to-r from-teal-600 to-teal-500',
-                'Routed to MODLINK': 'bg-gradient-to-r from-sky-600 to-sky-500',
-                'Fully Complete': 'bg-gradient-to-r from-emerald-600 to-emerald-400',
-            };
-            return colors[stageName] || 'bg-gradient-to-r from-slate-600 to-slate-500';
-        },
         
         async searchStudies() {
             if (!this.searchQuery) {
