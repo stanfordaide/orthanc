@@ -262,16 +262,22 @@ def track_mercure_sent():
 
 @app.route('/track/ai-results', methods=['POST'])
 def track_ai_results():
-    """Record AI results received back"""
+    """Record AI results received back - also implies MERCURE was successful"""
     data = request.json or {}
     study_id = data.get('study_id')
     
     conn = get_db()
     cur = conn.cursor()
     
+    # If we got AI results back, MERCURE must have succeeded
+    # This handles cases where job polling missed the completion
     cur.execute("""
         UPDATE study_workflows 
-        SET ai_results_received_at = NOW(), ai_results_received = TRUE, updated_at = NOW()
+        SET ai_results_received_at = NOW(), 
+            ai_results_received = TRUE,
+            mercure_sent_at = COALESCE(mercure_sent_at, NOW()),
+            mercure_send_success = TRUE,
+            updated_at = NOW()
         WHERE study_id = %s
     """, (study_id,))
     
