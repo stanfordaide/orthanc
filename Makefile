@@ -105,6 +105,13 @@ restart:
 	@docker compose restart
 	@echo "✅ Services restarted"
 
+# Rebuild and restart (use after code changes to api/)
+rebuild:
+	@echo "🔨 Rebuilding containers..."
+	@docker compose build
+	@docker compose up -d
+	@echo "✅ Rebuilt and restarted"
+
 logs:
 	@docker compose logs -f
 

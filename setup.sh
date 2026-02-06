@@ -629,7 +629,8 @@ make_executable() {
 }
 
 start_services() {
-    log_info "Starting Docker services..."
+    log_info "Building and starting Docker services..."
+    docker compose build --quiet
     docker compose up -d
     
     log_info "Waiting for Orthanc to be healthy..."
