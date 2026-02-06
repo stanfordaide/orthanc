@@ -735,7 +735,8 @@ function dashboard() {
             try {
                 const names = await this.api('/modalities');
                 
-                this.destinations = [];
+                // Build all destinations first
+                const newDestinations = [];
                 for (const name of names) {
                     try {
                         const config = await this.api(`/modalities/${name}/configuration`);
@@ -747,8 +748,7 @@ function dashboard() {
                         const port = isArray ? config[2] : config.Port;
                         const manufacturer = isArray ? (config[3] || '') : (config.Manufacturer || '');
                         
-                        // Add destination first (before testing connectivity)
-                        this.destinations.push({
+                        newDestinations.push({
                             name,
                             aet,
                             host,
@@ -767,17 +767,20 @@ function dashboard() {
                     }
                 }
                 
-                // Test connectivity in background (don't block UI)
-                this.testAllDestinations();
+                // Update all at once for better reactivity
+                this.destinations = newDestinations;
+                
+                // Test connectivity in background (don't block UI, don't modify array)
+                this.testAllDestinationsInBackground();
                 
             } catch (e) {
                 console.error('Failed to load destinations:', e);
             }
         },
         
-        async testAllDestinations() {
-            for (let i = 0; i < this.destinations.length; i++) {
-                const dest = this.destinations[i];
+        async testAllDestinationsInBackground() {
+            // Test each destination and update the full array to trigger reactivity
+            for (const dest of this.destinations) {
                 try {
                     const start = Date.now();
                     const response = await fetch(this.orthancUrl + `/modalities/${dest.name}/echo`, {
@@ -787,14 +790,16 @@ function dashboard() {
                     });
                     if (response.ok) {
                         const ms = Date.now() - start;
-                        this.destinations[i].responseTime = ms;
-                        this.destinations[i].status = ms > 1000 ? 'slow' : 'online';
+                        dest.responseTime = ms;
+                        dest.status = ms > 1000 ? 'slow' : 'online';
                     } else {
-                        this.destinations[i].status = 'offline';
+                        dest.status = 'offline';
                     }
                 } catch {
-                    this.destinations[i].status = 'offline';
+                    dest.status = 'offline';
                 }
+                // Force reactivity update by reassigning array
+                this.destinations = [...this.destinations];
             }
         },
         
@@ -803,11 +808,12 @@ function dashboard() {
                 const studyIds = await this.api('/studies');
                 const recent = studyIds.slice(0, 15);
                 
-                this.recentStudies = [];
+                // Build array first, then assign all at once
+                const newStudies = [];
                 for (const id of recent) {
                     try {
                         const study = await this.api(`/studies/${id}`);
-                        this.recentStudies.push({
+                        newStudies.push({
                             id,
                             patientName: study.PatientMainDicomTags?.PatientName || 'Unknown',
                             patientId: study.PatientMainDicomTags?.PatientID || '',
@@ -820,6 +826,8 @@ function dashboard() {
                         console.error(`Failed to load study ${id}:`, e);
                     }
                 }
+                // Assign all at once for proper reactivity
+                this.recentStudies = newStudies;
             } catch (e) {
                 console.error('Failed to load studies:', e);
             }
