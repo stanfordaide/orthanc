@@ -663,15 +663,23 @@ def routing_stats_compat():
 # INITIALIZATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
+_initialized = False
+_poller_started = False
+
 def init_on_startup():
+    global _initialized
+    if _initialized:
+        return True
+    
     for attempt in range(10):
         try:
-            print(f"Initializing database (attempt {attempt + 1}/10)...")
+            print(f"Initializing database (attempt {attempt + 1}/10)...", flush=True)
             init_db()
-            print("Database ready!")
+            print("Database ready!", flush=True)
+            _initialized = True
             return True
         except Exception as e:
-            print(f"Init failed: {e}")
+            print(f"Init failed: {e}", flush=True)
             if attempt < 9:
                 time.sleep(2)
     return False
@@ -679,14 +687,28 @@ def init_on_startup():
 
 def start_job_poller():
     """Start the background job poller thread"""
+    global _poller_started
+    if _poller_started:
+        return
+    
     poller_thread = threading.Thread(target=poll_pending_jobs, daemon=True)
     poller_thread.start()
-    print("[Init] Job poller thread started")
+    _poller_started = True
+    print("[Init] Job poller thread started", flush=True)
 
 
-# Initialize on import
-if init_on_startup():
-    start_job_poller()
+# Initialize database tables on module import
+init_on_startup()
+
+
+@app.before_request
+def ensure_poller_running():
+    """Ensure job poller is running (lazy start after fork)"""
+    global _poller_started
+    if not _poller_started and _initialized:
+        start_job_poller()
+
 
 if __name__ == '__main__':
+    start_job_poller()
     app.run(host='0.0.0.0', port=5000)

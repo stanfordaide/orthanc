@@ -146,10 +146,11 @@ services:
       # routing-api should start before orthanc so Lua can call it
     restart: always
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECRETS
