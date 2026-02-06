@@ -10,7 +10,7 @@
 #
 # ═══════════════════════════════════════════════════════════════════════════════
 
-.PHONY: help setup install quick-setup start stop restart logs status clean reset uninstall upgrade backup
+.PHONY: help setup install quick-setup start stop restart logs status clean reset uninstall upgrade backup validate seed-modalities
 
 # Overridable variables with defaults
 DICOM_STORAGE ?= /opt/orthanc/orthanc-storage
@@ -43,6 +43,8 @@ help:
 	@echo "  make clean                  Remove containers (keeps data)"
 	@echo "  make reset                  Reset config (keeps data, regenerates .env)"
 	@echo "  make uninstall              Remove everything (DANGER: deletes all data!)"
+	@echo "  make seed-modalities        Add default DICOM destinations"
+	@echo "  make validate               Check configuration"
 	@echo ""
 	@echo "PORTS (defaults)"
 	@echo "  8040  Operator Dashboard"
@@ -199,3 +201,17 @@ validate:
 	@docker compose config > /dev/null && echo "  ✅ docker-compose.yml valid" || echo "  ❌ docker-compose.yml invalid"
 	@echo ""
 	@echo "Run 'make setup' to fix any issues."
+
+# Manually seed default DICOM modalities
+seed-modalities:
+	@echo "🌱 Seeding default DICOM modalities..."
+	@curl -s -u "$(ORTHANC_USERNAME):$(ORTHANC_PASSWORD)" -X PUT "http://localhost:$(ORTHANC_WEB_PORT)/modalities/MERCURE" \
+		-H "Content-Type: application/json" -d '{"AET":"orthanc","Host":"172.17.0.1","Port":11112,"AllowEcho":true,"AllowStore":true}' && echo "  ✅ MERCURE" || echo "  ❌ MERCURE"
+	@curl -s -u "$(ORTHANC_USERNAME):$(ORTHANC_PASSWORD)" -X PUT "http://localhost:$(ORTHANC_WEB_PORT)/modalities/LPCHROUTER" \
+		-H "Content-Type: application/json" -d '{"AET":"LPCHROUTER","Host":"10.50.133.21","Port":4000,"AllowEcho":true,"AllowStore":true}' && echo "  ✅ LPCHROUTER" || echo "  ❌ LPCHROUTER"
+	@curl -s -u "$(ORTHANC_USERNAME):$(ORTHANC_PASSWORD)" -X PUT "http://localhost:$(ORTHANC_WEB_PORT)/modalities/LPCHTROUTER" \
+		-H "Content-Type: application/json" -d '{"AET":"LPCHTROUTER","Host":"10.50.130.114","Port":4000,"AllowEcho":true,"AllowStore":true}' && echo "  ✅ LPCHTROUTER" || echo "  ❌ LPCHTROUTER"
+	@curl -s -u "$(ORTHANC_USERNAME):$(ORTHANC_PASSWORD)" -X PUT "http://localhost:$(ORTHANC_WEB_PORT)/modalities/MODLINK" \
+		-H "Content-Type: application/json" -d '{"AET":"PSRTBONEAPP01","Host":"10.251.201.59","Port":104,"AllowEcho":true,"AllowStore":true}' && echo "  ✅ MODLINK" || echo "  ❌ MODLINK"
+	@echo ""
+	@echo "Done! Refresh the dashboard to see modalities."

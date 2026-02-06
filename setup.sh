@@ -654,15 +654,17 @@ start_services() {
 seed_modalities() {
     log_info "Configuring default DICOM modalities..."
     
-    local orthanc_url="http://localhost:8041"
-    local auth="orthanc_admin:$ORTHANC_PASSWORD"
+    local port="${ORTHANC_WEB_PORT:-8041}"
+    local orthanc_url="http://localhost:$port"
+    local user="${ORTHANC_USERNAME:-orthanc_admin}"
+    local pass="${ORTHANC_PASSWORD:-helloaide123}"
+    local auth="$user:$pass"
     
-    # Check if modalities already exist
+    log_info "Connecting to Orthanc at $orthanc_url..."
+    
+    # Check current modalities
     local existing=$(curl -s -u "$auth" "$orthanc_url/modalities" 2>/dev/null)
-    if [[ "$existing" != "[]" ]] && [[ -n "$existing" ]]; then
-        log_info "Modalities already configured, skipping seed"
-        return 0
-    fi
+    log_info "Current modalities: $existing"
     
     # Define default modalities (from your original config)
     # Format: NAME|AET|HOST|PORT
@@ -676,7 +678,13 @@ seed_modalities() {
     for modality in "${modalities[@]}"; do
         IFS='|' read -r name aet host port <<< "$modality"
         
-        local config="{\"AET\":\"$aet\",\"Host\":\"$host\",\"Port\":$port}"
+        # Check if this modality already exists
+        if echo "$existing" | grep -q "\"$name\""; then
+            log_info "Modality $name already exists, skipping"
+            continue
+        fi
+        
+        local config="{\"AET\":\"$aet\",\"Host\":\"$host\",\"Port\":$port,\"AllowEcho\":true,\"AllowStore\":true}"
         
         if curl -s -u "$auth" -X PUT "$orthanc_url/modalities/$name" \
             -H "Content-Type: application/json" \
