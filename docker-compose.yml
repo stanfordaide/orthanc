@@ -125,14 +125,22 @@ services:
     ports:
       - "${ROUTING_API_PORT:-8044}:5000"
     environment:
+      # Database connection
       - DB_HOST=orthanc-db
       - DB_PORT=5432
       - DB_NAME=orthanc
       - DB_USER=${POSTGRES_USER:-orthanc}
       - DB_PASS=${POSTGRES_PASSWORD:-ChangeThisPassword}
+      # Orthanc connection (for job polling)
+      - ORTHANC_URL=http://orthanc:8042
+      - ORTHANC_USER=${ORTHANC_USERNAME:-orthanc_admin}
+      - ORTHANC_PASS=${ORTHANC_PASSWORD:-helloaide123}
+      - JOB_POLL_INTERVAL=10
       - TZ=${TZ:-America/Los_Angeles}
     depends_on:
       orthanc-db:
+        condition: service_healthy
+      orthanc:
         condition: service_healthy
     restart: always
     healthcheck:

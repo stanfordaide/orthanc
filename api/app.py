@@ -1,9 +1,13 @@
 """
 Orthanc Routing Workflow Tracker
 Tracks studies through the AI processing pipeline with funnel visualization
+Includes background job poller for accurate send status tracking
 """
 
 import os
+import threading
+import time
+import requests
 from datetime import datetime, timedelta
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -20,6 +24,14 @@ DB_NAME = os.environ.get('DB_NAME', 'orthanc')
 DB_USER = os.environ.get('DB_USER', 'orthanc')
 DB_PASS = os.environ.get('DB_PASS', 'ChangeThisPassword')
 
+# Orthanc connection for job polling
+ORTHANC_URL = os.environ.get('ORTHANC_URL', 'http://orthanc:8042')
+ORTHANC_USER = os.environ.get('ORTHANC_USER', 'orthanc_admin')
+ORTHANC_PASS = os.environ.get('ORTHANC_PASS', 'helloaide123')
+
+# Job poller settings
+JOB_POLL_INTERVAL = int(os.environ.get('JOB_POLL_INTERVAL', '10'))  # seconds
+
 
 def get_db():
     return psycopg2.connect(
@@ -29,10 +41,11 @@ def get_db():
 
 
 def init_db():
-    """Create workflow tracking table"""
+    """Create workflow tracking tables"""
     conn = get_db()
     cur = conn.cursor()
     
+    # Main workflow table
     cur.execute("""
         CREATE TABLE IF NOT EXISTS study_workflows (
             study_id VARCHAR(64) PRIMARY KEY,
@@ -71,9 +84,122 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_workflows_created ON study_workflows(created_at);
     """)
     
+    # Pending jobs table for tracking Orthanc job completion
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS pending_jobs (
+            job_id VARCHAR(64) PRIMARY KEY,
+            study_id VARCHAR(64) NOT NULL,
+            destination VARCHAR(32) NOT NULL,
+            queued_at TIMESTAMP DEFAULT NOW()
+        );
+        
+        CREATE INDEX IF NOT EXISTS idx_pending_jobs_queued ON pending_jobs(queued_at);
+    """)
+    
     conn.commit()
     cur.close()
     conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# JOB POLLER - Background thread that checks Orthanc job status
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def poll_pending_jobs():
+    """Background thread that polls Orthanc for job completion status"""
+    print(f"[JobPoller] Started - polling every {JOB_POLL_INTERVAL}s")
+    
+    while True:
+        try:
+            conn = get_db()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            
+            # Get all pending jobs
+            cur.execute("SELECT job_id, study_id, destination FROM pending_jobs")
+            pending = cur.fetchall()
+            
+            if pending:
+                print(f"[JobPoller] Checking {len(pending)} pending jobs...")
+            
+            for job in pending:
+                job_id = job['job_id']
+                study_id = job['study_id']
+                destination = job['destination']
+                
+                try:
+                    # Query Orthanc for job status
+                    resp = requests.get(
+                        f"{ORTHANC_URL}/jobs/{job_id}",
+                        auth=(ORTHANC_USER, ORTHANC_PASS),
+                        timeout=5
+                    )
+                    
+                    if resp.status_code == 404:
+                        # Job doesn't exist anymore - might have been cleaned up
+                        print(f"[JobPoller] Job {job_id} not found - removing from pending")
+                        cur.execute("DELETE FROM pending_jobs WHERE job_id = %s", (job_id,))
+                        continue
+                    
+                    job_info = resp.json()
+                    state = job_info.get('State', 'Unknown')
+                    
+                    if state == 'Success':
+                        # Job completed successfully
+                        print(f"[JobPoller] ✓ Job {job_id} SUCCEEDED ({destination})")
+                        update_workflow_status(cur, study_id, destination, True, None)
+                        cur.execute("DELETE FROM pending_jobs WHERE job_id = %s", (job_id,))
+                        
+                    elif state == 'Failure':
+                        # Job failed
+                        error_msg = job_info.get('ErrorDescription') or job_info.get('ErrorCode') or 'Unknown error'
+                        print(f"[JobPoller] ✗ Job {job_id} FAILED ({destination}): {error_msg}")
+                        update_workflow_status(cur, study_id, destination, False, error_msg)
+                        cur.execute("DELETE FROM pending_jobs WHERE job_id = %s", (job_id,))
+                        
+                    elif state in ('Running', 'Pending', 'Paused'):
+                        # Still in progress
+                        pass
+                        
+                    else:
+                        print(f"[JobPoller] Unknown state for job {job_id}: {state}")
+                        
+                except requests.exceptions.RequestException as e:
+                    print(f"[JobPoller] Error checking job {job_id}: {e}")
+            
+            conn.commit()
+            cur.close()
+            conn.close()
+            
+        except Exception as e:
+            print(f"[JobPoller] Error: {e}")
+        
+        time.sleep(JOB_POLL_INTERVAL)
+
+
+def update_workflow_status(cur, study_id, destination, success, error):
+    """Update the workflow table with job completion status"""
+    col_map = {
+        'MERCURE': 'mercure',
+        'LPCHROUTER': 'lpch',
+        'LPCH': 'lpch',
+        'LPCHTROUTER': 'lpcht',
+        'LPCHT': 'lpcht',
+        'MODLINK': 'modlink'
+    }
+    
+    prefix = col_map.get(destination.upper())
+    if not prefix:
+        print(f"[JobPoller] Unknown destination: {destination}")
+        return
+    
+    cur.execute(f"""
+        UPDATE study_workflows 
+        SET {prefix}_sent_at = COALESCE({prefix}_sent_at, NOW()),
+            {prefix}_send_success = %s, 
+            {prefix}_send_error = %s, 
+            updated_at = NOW()
+        WHERE study_id = %s
+    """, (success, error, study_id))
 
 
 @app.route('/health', methods=['GET'])
@@ -157,7 +283,7 @@ def track_ai_results():
 
 @app.route('/track/destination', methods=['POST'])
 def track_destination():
-    """Record destination send attempt"""
+    """Record destination send attempt (immediate, no job tracking)"""
     data = request.json or {}
     study_id = data.get('study_id')
     destination = data.get('destination', '').upper()
@@ -190,6 +316,38 @@ def track_destination():
     cur.close()
     conn.close()
     return jsonify({'ok': True})
+
+
+@app.route('/track/job', methods=['POST'])
+def track_job():
+    """Register a pending job to be tracked for completion by the background poller"""
+    data = request.json or {}
+    job_id = data.get('job_id')
+    study_id = data.get('study_id')
+    destination = data.get('destination', '').upper()
+    
+    if not all([job_id, study_id, destination]):
+        return jsonify({'error': 'job_id, study_id, and destination required'}), 400
+    
+    conn = get_db()
+    cur = conn.cursor()
+    
+    # Insert pending job for poller to track
+    cur.execute("""
+        INSERT INTO pending_jobs (job_id, study_id, destination)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (job_id) DO UPDATE SET
+            study_id = EXCLUDED.study_id,
+            destination = EXCLUDED.destination,
+            queued_at = NOW()
+    """, (job_id, study_id, destination))
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+    
+    print(f"[Track] Registered pending job {job_id} for {destination} (study: {study_id})")
+    return jsonify({'ok': True, 'message': f'Job {job_id} registered for tracking'})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -506,19 +664,29 @@ def routing_stats_compat():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def init_on_startup():
-    import time
     for attempt in range(10):
         try:
             print(f"Initializing database (attempt {attempt + 1}/10)...")
             init_db()
             print("Database ready!")
-            return
+            return True
         except Exception as e:
             print(f"Init failed: {e}")
             if attempt < 9:
                 time.sleep(2)
+    return False
 
-init_on_startup()
+
+def start_job_poller():
+    """Start the background job poller thread"""
+    poller_thread = threading.Thread(target=poll_pending_jobs, daemon=True)
+    poller_thread.start()
+    print("[Init] Job poller thread started")
+
+
+# Initialize on import
+if init_on_startup():
+    start_job_poller()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
