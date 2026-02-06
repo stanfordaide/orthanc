@@ -1,68 +1,62 @@
 -- ═══════════════════════════════════════════════════════════════════════════════
--- WORKFLOW TRACKER - Track study journey through routing stages
+-- PIPELINE TRACKER - Track study journey through AI processing pipeline
 -- ═══════════════════════════════════════════════════════════════════════════════
-ROUTING_API_URL = "http://routing-api:5000"
+TRACKING_API = "http://routing-api:5000"
 
--- Start tracking a new workflow
-function StartWorkflow(studyId, patientName, studyDescription, studyInstanceUid)
-    local payload = {
-        study_id = studyId,
-        patient_name = patientName,
-        study_description = studyDescription,
-        study_instance_uid = studyInstanceUid
-    }
-    
+-- Start tracking a new study
+function TrackStart(studyId, patientName, studyDescription, studyUid)
     pcall(function()
-        HttpPost(ROUTING_API_URL .. "/workflow/start", DumpJson(payload), {
-            ["Content-Type"] = "application/json"
-        })
+        HttpPost(TRACKING_API .. "/track/start", DumpJson({
+            study_id = studyId,
+            patient_name = patientName,
+            study_description = studyDescription,
+            study_uid = studyUid
+        }), { ["Content-Type"] = "application/json" })
     end)
-    print("[WORKFLOW] Started tracking: " .. studyId)
+    print("[TRACK] Started: " .. studyId)
 end
 
--- Update a workflow stage
--- stage: mercure_sent, mercure_returned, lpch, lpcht, modlink
--- status: pending, sending, success, failed
-function UpdateWorkflow(studyId, stage, status, errorMessage)
-    local payload = {
-        study_id = studyId,
-        stage = stage,
-        status = status,
-        error = errorMessage
-    }
-    
+-- Track MERCURE send result
+function TrackMercureSent(studyId, success, errorMsg)
     pcall(function()
-        HttpPost(ROUTING_API_URL .. "/workflow/update", DumpJson(payload), {
-            ["Content-Type"] = "application/json"
-        })
+        HttpPost(TRACKING_API .. "/track/mercure-sent", DumpJson({
+            study_id = studyId,
+            success = success,
+            error = errorMsg
+        }), { ["Content-Type"] = "application/json" })
     end)
-    print("[WORKFLOW] " .. studyId .. " -> " .. stage .. " = " .. status)
+    print("[TRACK] MERCURE send: " .. (success and "OK" or "FAILED"))
 end
 
--- Mark that MERCURE has returned results
-function MarkMercureReturned(studyId)
-    local payload = { study_id = studyId }
-    
+-- Track AI results received back
+function TrackAIResultsReceived(studyId)
     pcall(function()
-        HttpPost(ROUTING_API_URL .. "/workflow/mercure-returned", DumpJson(payload), {
-            ["Content-Type"] = "application/json"
-        })
+        HttpPost(TRACKING_API .. "/track/ai-results", DumpJson({
+            study_id = studyId
+        }), { ["Content-Type"] = "application/json" })
     end)
-    print("[WORKFLOW] " .. studyId .. " -> MERCURE results received")
+    print("[TRACK] AI results received for: " .. studyId)
 end
 
--- Legacy compatibility function
+-- Track destination send result
+function TrackDestination(studyId, destination, success, errorMsg)
+    pcall(function()
+        HttpPost(TRACKING_API .. "/track/destination", DumpJson({
+            study_id = studyId,
+            destination = destination,
+            success = success,
+            error = errorMsg
+        }), { ["Content-Type"] = "application/json" })
+    end)
+    print("[TRACK] " .. destination .. ": " .. (success and "OK" or "FAILED"))
+end
+
+-- Legacy compatibility
 function TrackRouting(studyId, destination, status, errorMessage)
-    -- Map destination to workflow stage
-    local stageMap = {
-        MERCURE = "mercure_sent",
-        LPCHROUTER = "lpch",
-        LPCHTROUTER = "lpcht",
-        MODLINK = "modlink"
-    }
-    local stage = stageMap[destination]
-    if stage then
-        UpdateWorkflow(studyId, stage, status, errorMessage)
+    if destination == "MERCURE" then
+        TrackMercureSent(studyId, status == "success", errorMessage)
+    else
+        TrackDestination(studyId, destination, status == "success", errorMessage)
     end
 end
 
@@ -303,8 +297,8 @@ function OnStableStudy(studyId, tags, metadata, origin)
     
     if hasAIDEOutput then
         print('   ✓ Study contains Stanford AIDE output - routing to final destinations')
-        -- Mark that MERCURE has returned results
-        MarkMercureReturned(studyId)
+        -- Track that AI results have been received
+        TrackAIResultsReceived(studyId)
         
         -- Route Stanford AIDE outputs to their destinations
         for _, instance in pairs(instances) do
@@ -335,31 +329,29 @@ function OnStableStudy(studyId, tags, metadata, origin)
                             print('   ✓ Detected QA Visualization - routing to LPCHROUTER and LPCHTROUTER')
                             
                             -- Route to LPCHROUTER
-                            TrackRouting(studyId, 'LPCHROUTER', 'sent')
                             local success1, job1 = pcall(function()
                                 return SendToModality(instance['ID'], 'LPCHROUTER')
                             end)
                             
                             if success1 and job1 then
                                 print('      ✓ Successfully sent to LPCHROUTER (Job: ' .. tostring(job1) .. ')')
-                                TrackRouting(studyId, 'LPCHROUTER', 'success')
+                                TrackDestination(studyId, 'LPCHROUTER', true, nil)
                             else
                                 print('      ✗ FAILED to send to LPCHROUTER - Error: ' .. tostring(job1))
-                                TrackRouting(studyId, 'LPCHROUTER', 'failed', tostring(job1))
+                                TrackDestination(studyId, 'LPCHROUTER', false, tostring(job1))
                             end
                             
                             -- Route to LPCHTROUTER
-                            TrackRouting(studyId, 'LPCHTROUTER', 'sent')
                             local success2, job2 = pcall(function()
                                 return SendToModality(instance['ID'], 'LPCHTROUTER')
                             end)
                             
                             if success2 and job2 then
                                 print('      ✓ Successfully sent to LPCHTROUTER (Job: ' .. tostring(job2) .. ')')
-                                TrackRouting(studyId, 'LPCHTROUTER', 'success')
+                                TrackDestination(studyId, 'LPCHTROUTER', true, nil)
                             else
                                 print('      ✗ FAILED to send to LPCHTROUTER - Error: ' .. tostring(job2))
-                                TrackRouting(studyId, 'LPCHTROUTER', 'failed', tostring(job2))
+                                TrackDestination(studyId, 'LPCHTROUTER', false, tostring(job2))
                             end
                             
                             -- Mark as processed after routing
@@ -376,17 +368,16 @@ function OnStableStudy(studyId, tags, metadata, origin)
                         elseif modality == 'SR' then
                             print('   ✓ Detected Structured Report - routing to MODLINK')
                             
-                            TrackRouting(studyId, 'MODLINK', 'sent')
                             local success1, job1 = pcall(function()
                                 return SendToModality(instance['ID'], 'MODLINK')
                             end)
                             
                             if success1 and job1 then
                                 print('      ✓ Successfully sent to MODLINK (Job: ' .. tostring(job1) .. ')')
-                                TrackRouting(studyId, 'MODLINK', 'success')
+                                TrackDestination(studyId, 'MODLINK', true, nil)
                             else
                                 print('      ✗ FAILED to send to MODLINK - Error: ' .. tostring(job1))
-                                TrackRouting(studyId, 'MODLINK', 'failed', tostring(job1))
+                                TrackDestination(studyId, 'MODLINK', false, tostring(job1))
                             end
                             
                             -- Mark as processed after routing
@@ -423,13 +414,12 @@ function OnStableStudy(studyId, tags, metadata, origin)
     print('   Original Description: ' .. studyDescription)
     print('   Found ' .. getTableLength(instances) .. ' instances in study')
     
-    -- Start workflow tracking
-    StartWorkflow(studyId, patientName, studyDescription, studyInstanceUID)
+    -- Start pipeline tracking
+    TrackStart(studyId, patientName, studyDescription, studyInstanceUID)
     
     local bestInstance = findHighestResolutionInstance(instances)
     
     if bestInstance then
-        TrackRouting(studyId, 'MERCURE', 'sent')
         local success, job = pcall(function()
             return SendToModality(bestInstance['ID'], 'MERCURE')
         end)
@@ -438,11 +428,11 @@ function OnStableStudy(studyId, tags, metadata, origin)
             print('   ✓ Highest resolution instance queued for MERCURE (Job: ' .. tostring(job) .. ')')
             print('AUTO-FORWARD: Bone length study (highest res) forwarded to MERCURE - Patient: ' .. 
                       patientName .. ', Study: ' .. studyId .. ', Job: ' .. tostring(job))
-            TrackRouting(studyId, 'MERCURE', 'success')
+            TrackMercureSent(studyId, true, nil)
         else
             print('   ✗ FAILED to queue highest resolution instance to MERCURE - Error: ' .. tostring(job))
             print('AUTO-FORWARD FAILED: Could not send highest resolution instance - Study: ' .. studyId)
-            TrackRouting(studyId, 'MERCURE', 'failed', tostring(job))
+            TrackMercureSent(studyId, false, tostring(job))
         end
     else
         print('   ⚠ No valid instance found with matrix dimensions')

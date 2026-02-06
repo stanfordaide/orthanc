@@ -1,6 +1,6 @@
 """
 Orthanc Routing Workflow Tracker
-Tracks studies through their complete routing journey with aggregate stats
+Tracks studies through the AI processing pipeline with funnel visualization
 """
 
 import os
@@ -22,22 +22,17 @@ DB_PASS = os.environ.get('DB_PASS', 'ChangeThisPassword')
 
 
 def get_db():
-    """Get database connection"""
     return psycopg2.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        database=DB_NAME,
-        user=DB_USER,
-        password=DB_PASS
+        host=DB_HOST, port=DB_PORT, database=DB_NAME,
+        user=DB_USER, password=DB_PASS
     )
 
 
 def init_db():
-    """Create workflow tracking tables"""
+    """Create workflow tracking table"""
     conn = get_db()
     cur = conn.cursor()
     
-    # Main workflow tracking table
     cur.execute("""
         CREATE TABLE IF NOT EXISTS study_workflows (
             study_id VARCHAR(64) PRIMARY KEY,
@@ -45,53 +40,35 @@ def init_db():
             patient_name TEXT,
             study_description TEXT,
             
-            -- Stage 1: Send to MERCURE for AI processing
+            -- Stage 1: Send to MERCURE
             mercure_sent_at TIMESTAMP,
-            mercure_sent_status VARCHAR(20) DEFAULT 'pending',
-            mercure_job_id VARCHAR(64),
+            mercure_send_success BOOLEAN,
+            mercure_send_error TEXT,
             
-            -- Stage 2: Receive results back from MERCURE
-            mercure_returned_at TIMESTAMP,
-            mercure_return_status VARCHAR(20) DEFAULT 'waiting',
+            -- Stage 2: AI Results received back
+            ai_results_received_at TIMESTAMP,
+            ai_results_received BOOLEAN DEFAULT FALSE,
             
-            -- Stage 3: Route QA Visualization to LPCH routers
+            -- Stage 3a: Route QA Viz to LPCH Router
             lpch_sent_at TIMESTAMP,
-            lpch_status VARCHAR(20) DEFAULT 'pending',
+            lpch_send_success BOOLEAN,
+            lpch_send_error TEXT,
+            
+            -- Stage 3b: Route QA Viz to LPCH T Router
             lpcht_sent_at TIMESTAMP,
-            lpcht_status VARCHAR(20) DEFAULT 'pending',
+            lpcht_send_success BOOLEAN,
+            lpcht_send_error TEXT,
             
-            -- Stage 4: Route Structured Reports to MODLINK
+            -- Stage 3c: Route SR to MODLINK
             modlink_sent_at TIMESTAMP,
-            modlink_status VARCHAR(20) DEFAULT 'pending',
-            
-            -- Overall workflow status
-            workflow_status VARCHAR(20) DEFAULT 'started',
-            last_error TEXT,
-            error_stage VARCHAR(32),
+            modlink_send_success BOOLEAN,
+            modlink_send_error TEXT,
             
             created_at TIMESTAMP DEFAULT NOW(),
             updated_at TIMESTAMP DEFAULT NOW()
         );
         
-        CREATE INDEX IF NOT EXISTS idx_workflows_status ON study_workflows(workflow_status);
         CREATE INDEX IF NOT EXISTS idx_workflows_created ON study_workflows(created_at);
-    """)
-    
-    # Event log for detailed tracking
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS workflow_events (
-            id SERIAL PRIMARY KEY,
-            study_id VARCHAR(64) NOT NULL,
-            stage VARCHAR(32) NOT NULL,
-            status VARCHAR(20) NOT NULL,
-            destination VARCHAR(64),
-            job_id VARCHAR(64),
-            error_message TEXT,
-            timestamp TIMESTAMP DEFAULT NOW()
-        );
-        
-        CREATE INDEX IF NOT EXISTS idx_events_study ON workflow_events(study_id);
-        CREATE INDEX IF NOT EXISTS idx_events_time ON workflow_events(timestamp);
     """)
     
     conn.commit()
@@ -105,14 +82,13 @@ def health():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# WORKFLOW TRACKING ENDPOINTS
+# TRACKING ENDPOINTS (called by Lua)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@app.route('/workflow/start', methods=['POST'])
-def start_workflow():
+@app.route('/track/start', methods=['POST'])
+def track_start():
     """Start tracking a new study workflow"""
     data = request.json or {}
-    
     study_id = data.get('study_id')
     if not study_id:
         return jsonify({'error': 'study_id required'}), 400
@@ -120,157 +96,99 @@ def start_workflow():
     conn = get_db()
     cur = conn.cursor()
     
-    # Insert or update workflow
     cur.execute("""
-        INSERT INTO study_workflows (study_id, study_instance_uid, patient_name, study_description, workflow_status)
-        VALUES (%s, %s, %s, %s, 'started')
+        INSERT INTO study_workflows (study_id, study_instance_uid, patient_name, study_description)
+        VALUES (%s, %s, %s, %s)
         ON CONFLICT (study_id) DO UPDATE SET
-            study_instance_uid = EXCLUDED.study_instance_uid,
-            patient_name = EXCLUDED.patient_name,
-            study_description = EXCLUDED.study_description,
+            patient_name = COALESCE(EXCLUDED.patient_name, study_workflows.patient_name),
+            study_description = COALESCE(EXCLUDED.study_description, study_workflows.study_description),
             updated_at = NOW()
-        RETURNING study_id
-    """, (
-        study_id,
-        data.get('study_instance_uid'),
-        data.get('patient_name'),
-        data.get('study_description')
-    ))
-    
-    # Log event
-    cur.execute("""
-        INSERT INTO workflow_events (study_id, stage, status)
-        VALUES (%s, 'workflow', 'started')
-    """, (study_id,))
+    """, (study_id, data.get('study_uid'), data.get('patient_name'), data.get('study_description')))
     
     conn.commit()
     cur.close()
     conn.close()
-    
-    return jsonify({'ok': True, 'study_id': study_id})
-
-
-@app.route('/workflow/update', methods=['POST'])
-def update_workflow():
-    """Update a workflow stage"""
-    data = request.json or {}
-    
-    study_id = data.get('study_id')
-    stage = data.get('stage')  # mercure_sent, mercure_returned, lpch, lpcht, modlink
-    status = data.get('status')  # pending, sending, success, failed
-    
-    if not all([study_id, stage, status]):
-        return jsonify({'error': 'study_id, stage, and status required'}), 400
-    
-    conn = get_db()
-    cur = conn.cursor()
-    
-    # Map stage to column names
-    stage_map = {
-        'mercure_sent': ('mercure_sent_at', 'mercure_sent_status'),
-        'mercure_returned': ('mercure_returned_at', 'mercure_return_status'),
-        'lpch': ('lpch_sent_at', 'lpch_status'),
-        'lpcht': ('lpcht_sent_at', 'lpcht_status'),
-        'modlink': ('modlink_sent_at', 'modlink_status'),
-    }
-    
-    if stage not in stage_map:
-        return jsonify({'error': f'Invalid stage: {stage}'}), 400
-    
-    time_col, status_col = stage_map[stage]
-    
-    # Update the workflow
-    error_msg = data.get('error')
-    
-    if status in ('success', 'failed'):
-        # Update timestamp and status
-        cur.execute(f"""
-            UPDATE study_workflows 
-            SET {time_col} = NOW(), 
-                {status_col} = %s,
-                last_error = CASE WHEN %s = 'failed' THEN %s ELSE last_error END,
-                error_stage = CASE WHEN %s = 'failed' THEN %s ELSE error_stage END,
-                updated_at = NOW()
-            WHERE study_id = %s
-        """, (status, status, error_msg, status, stage, study_id))
-    else:
-        # Just update status
-        cur.execute(f"""
-            UPDATE study_workflows 
-            SET {status_col} = %s, updated_at = NOW()
-            WHERE study_id = %s
-        """, (status, study_id))
-    
-    # Log event
-    cur.execute("""
-        INSERT INTO workflow_events (study_id, stage, status, destination, error_message)
-        VALUES (%s, %s, %s, %s, %s)
-    """, (study_id, stage, status, data.get('destination'), error_msg))
-    
-    # Check if workflow is complete
-    cur.execute("""
-        SELECT mercure_sent_status, mercure_return_status, 
-               lpch_status, lpcht_status, modlink_status
-        FROM study_workflows WHERE study_id = %s
-    """, (study_id,))
-    row = cur.fetchone()
-    
-    if row:
-        statuses = row
-        # Workflow complete if all relevant stages succeeded
-        # Note: Not all studies need all stages
-        if statuses[0] == 'success' and statuses[1] == 'received':
-            # Check if post-processing routes succeeded
-            if statuses[2] == 'success' and statuses[3] == 'success':
-                cur.execute("""
-                    UPDATE study_workflows SET workflow_status = 'complete', updated_at = NOW()
-                    WHERE study_id = %s
-                """, (study_id,))
-        
-        # Check for stuck/failed
-        if 'failed' in statuses:
-            cur.execute("""
-                UPDATE study_workflows SET workflow_status = 'failed', updated_at = NOW()
-                WHERE study_id = %s
-            """, (study_id,))
-    
-    conn.commit()
-    cur.close()
-    conn.close()
-    
     return jsonify({'ok': True})
 
 
-@app.route('/workflow/mercure-returned', methods=['POST'])
-def mercure_returned():
-    """Mark that MERCURE has returned results for a study"""
+@app.route('/track/mercure-sent', methods=['POST'])
+def track_mercure_sent():
+    """Record MERCURE send attempt"""
     data = request.json or {}
     study_id = data.get('study_id')
-    
-    if not study_id:
-        return jsonify({'error': 'study_id required'}), 400
+    success = data.get('success', False)
+    error = data.get('error')
     
     conn = get_db()
     cur = conn.cursor()
     
     cur.execute("""
         UPDATE study_workflows 
-        SET mercure_returned_at = NOW(), 
-            mercure_return_status = 'received',
-            workflow_status = 'processing',
-            updated_at = NOW()
+        SET mercure_sent_at = NOW(), mercure_send_success = %s, mercure_send_error = %s, updated_at = NOW()
         WHERE study_id = %s
-    """, (study_id,))
+    """, (success, error, study_id))
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/track/ai-results', methods=['POST'])
+def track_ai_results():
+    """Record AI results received back"""
+    data = request.json or {}
+    study_id = data.get('study_id')
+    
+    conn = get_db()
+    cur = conn.cursor()
     
     cur.execute("""
-        INSERT INTO workflow_events (study_id, stage, status)
-        VALUES (%s, 'mercure_returned', 'received')
+        UPDATE study_workflows 
+        SET ai_results_received_at = NOW(), ai_results_received = TRUE, updated_at = NOW()
+        WHERE study_id = %s
     """, (study_id,))
     
     conn.commit()
     cur.close()
     conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/track/destination', methods=['POST'])
+def track_destination():
+    """Record destination send attempt"""
+    data = request.json or {}
+    study_id = data.get('study_id')
+    destination = data.get('destination', '').upper()
+    success = data.get('success', False)
+    error = data.get('error')
     
+    # Map destination to column prefix
+    col_map = {
+        'LPCHROUTER': 'lpch',
+        'LPCH': 'lpch',
+        'LPCHTROUTER': 'lpcht',
+        'LPCHT': 'lpcht',
+        'MODLINK': 'modlink'
+    }
+    
+    prefix = col_map.get(destination)
+    if not prefix:
+        return jsonify({'error': f'Unknown destination: {destination}'}), 400
+    
+    conn = get_db()
+    cur = conn.cursor()
+    
+    cur.execute(f"""
+        UPDATE study_workflows 
+        SET {prefix}_sent_at = NOW(), {prefix}_send_success = %s, {prefix}_send_error = %s, updated_at = NOW()
+        WHERE study_id = %s
+    """, (success, error, study_id))
+    
+    conn.commit()
+    cur.close()
+    conn.close()
     return jsonify({'ok': True})
 
 
@@ -278,333 +196,291 @@ def mercure_returned():
 # QUERY ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@app.route('/workflow/study/<study_id>', methods=['GET'])
-def get_workflow(study_id):
-    """Get workflow status for a specific study"""
-    conn = get_db()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    
-    cur.execute("""
-        SELECT * FROM study_workflows WHERE study_id = %s
-    """, (study_id,))
-    workflow = cur.fetchone()
-    
-    cur.execute("""
-        SELECT stage, status, destination, error_message, timestamp
-        FROM workflow_events 
-        WHERE study_id = %s 
-        ORDER BY timestamp ASC
-    """, (study_id,))
-    events = cur.fetchall()
-    
-    cur.close()
-    conn.close()
-    
-    if not workflow:
-        return jsonify({'error': 'Workflow not found'}), 404
-    
-    # Convert timestamps
-    for key, val in workflow.items():
-        if isinstance(val, datetime):
-            workflow[key] = val.isoformat()
-    
-    for event in events:
-        if event.get('timestamp'):
-            event['timestamp'] = event['timestamp'].isoformat()
-    
-    return jsonify({
-        'workflow': workflow,
-        'events': events
-    })
-
-
-@app.route('/workflow/recent', methods=['GET'])
-def get_recent_workflows():
-    """Get recent workflows"""
+@app.route('/workflows', methods=['GET'])
+def get_workflows():
+    """Get recent workflows with their pipeline status"""
     limit = request.args.get('limit', 50, type=int)
-    status = request.args.get('status')  # Optional filter
+    hours = request.args.get('hours', 24, type=int)
     
     conn = get_db()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
-    if status:
-        cur.execute("""
-            SELECT study_id, patient_name, study_description, workflow_status,
-                   mercure_sent_status, mercure_return_status, 
-                   lpch_status, lpcht_status, modlink_status,
-                   last_error, error_stage, created_at, updated_at
-            FROM study_workflows 
-            WHERE workflow_status = %s
-            ORDER BY updated_at DESC
-            LIMIT %s
-        """, (status, limit))
-    else:
-        cur.execute("""
-            SELECT study_id, patient_name, study_description, workflow_status,
-                   mercure_sent_status, mercure_return_status, 
-                   lpch_status, lpcht_status, modlink_status,
-                   last_error, error_stage, created_at, updated_at
-            FROM study_workflows 
-            ORDER BY updated_at DESC
-            LIMIT %s
-        """, (limit,))
+    cur.execute("""
+        SELECT 
+            study_id,
+            patient_name,
+            study_description,
+            
+            -- Stage 1: MERCURE
+            mercure_sent_at,
+            mercure_send_success,
+            mercure_send_error,
+            
+            -- Stage 2: AI Results
+            ai_results_received_at,
+            ai_results_received,
+            
+            -- Stage 3: Destinations
+            lpch_sent_at, lpch_send_success, lpch_send_error,
+            lpcht_sent_at, lpcht_send_success, lpcht_send_error,
+            modlink_sent_at, modlink_send_success, modlink_send_error,
+            
+            created_at,
+            updated_at
+        FROM study_workflows
+        WHERE created_at > NOW() - INTERVAL '%s hours'
+        ORDER BY created_at DESC
+        LIMIT %s
+    """, (hours, limit))
     
     workflows = cur.fetchall()
     cur.close()
     conn.close()
     
-    # Convert timestamps
+    # Convert to pipeline format
+    result = []
     for w in workflows:
-        for key in ['created_at', 'updated_at']:
-            if w.get(key):
-                w[key] = w[key].isoformat()
+        # Determine current stage and status
+        pipeline = {
+            'study_id': w['study_id'],
+            'patient_name': w['patient_name'],
+            'study_description': w['study_description'],
+            'created_at': w['created_at'].isoformat() if w['created_at'] else None,
+            'stages': {
+                'mercure': {
+                    'status': 'success' if w['mercure_send_success'] else ('failed' if w['mercure_send_success'] is False else 'pending'),
+                    'timestamp': w['mercure_sent_at'].isoformat() if w['mercure_sent_at'] else None,
+                    'error': w['mercure_send_error']
+                },
+                'ai_results': {
+                    'status': 'received' if w['ai_results_received'] else 'waiting',
+                    'timestamp': w['ai_results_received_at'].isoformat() if w['ai_results_received_at'] else None
+                },
+                'lpch': {
+                    'status': 'success' if w['lpch_send_success'] else ('failed' if w['lpch_send_success'] is False else 'pending'),
+                    'timestamp': w['lpch_sent_at'].isoformat() if w['lpch_sent_at'] else None,
+                    'error': w['lpch_send_error']
+                },
+                'lpcht': {
+                    'status': 'success' if w['lpcht_send_success'] else ('failed' if w['lpcht_send_success'] is False else 'pending'),
+                    'timestamp': w['lpcht_sent_at'].isoformat() if w['lpcht_sent_at'] else None,
+                    'error': w['lpcht_send_error']
+                },
+                'modlink': {
+                    'status': 'success' if w['modlink_send_success'] else ('failed' if w['modlink_send_success'] is False else 'pending'),
+                    'timestamp': w['modlink_sent_at'].isoformat() if w['modlink_sent_at'] else None,
+                    'error': w['modlink_send_error']
+                }
+            }
+        }
+        result.append(pipeline)
     
-    return jsonify(workflows)
+    return jsonify(result)
 
 
-@app.route('/workflow/stuck', methods=['GET'])
-def get_stuck_workflows():
-    """Get workflows that appear stuck (no progress in 30+ minutes)"""
+@app.route('/workflows/<study_id>', methods=['GET'])
+def get_workflow(study_id):
+    """Get single workflow details"""
     conn = get_db()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
-    cur.execute("""
-        SELECT study_id, patient_name, study_description, workflow_status,
-               mercure_sent_status, mercure_return_status, 
-               lpch_status, lpcht_status, modlink_status,
-               last_error, error_stage, created_at, updated_at,
-               EXTRACT(EPOCH FROM (NOW() - updated_at))/60 as minutes_since_update
-        FROM study_workflows 
-        WHERE workflow_status NOT IN ('complete', 'failed')
-          AND updated_at < NOW() - INTERVAL '30 minutes'
-        ORDER BY updated_at ASC
-    """)
-    
-    stuck = cur.fetchall()
+    cur.execute("SELECT * FROM study_workflows WHERE study_id = %s", (study_id,))
+    w = cur.fetchone()
     cur.close()
     conn.close()
     
-    for w in stuck:
-        for key in ['created_at', 'updated_at']:
-            if w.get(key):
-                w[key] = w[key].isoformat()
-    
-    return jsonify(stuck)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# AGGREGATE STATISTICS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.route('/workflow/stats', methods=['GET'])
-def get_aggregate_stats():
-    """Get aggregate workflow statistics"""
-    # Time range filter
-    hours = request.args.get('hours', 24, type=int)
-    
-    conn = get_db()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    
-    # Overall workflow stats
-    cur.execute("""
-        SELECT 
-            COUNT(*) as total,
-            COUNT(*) FILTER (WHERE workflow_status = 'complete') as complete,
-            COUNT(*) FILTER (WHERE workflow_status = 'failed') as failed,
-            COUNT(*) FILTER (WHERE workflow_status IN ('started', 'processing')) as in_progress,
-            COUNT(*) FILTER (WHERE workflow_status NOT IN ('complete', 'failed') 
-                            AND updated_at < NOW() - INTERVAL '30 minutes') as stuck
-        FROM study_workflows
-        WHERE created_at > NOW() - INTERVAL '%s hours'
-    """, (hours,))
-    overall = cur.fetchone()
-    
-    # Per-stage success rates
-    cur.execute("""
-        SELECT 
-            -- MERCURE send
-            COUNT(*) FILTER (WHERE mercure_sent_status = 'success') as mercure_sent_success,
-            COUNT(*) FILTER (WHERE mercure_sent_status = 'failed') as mercure_sent_failed,
-            
-            -- MERCURE return
-            COUNT(*) FILTER (WHERE mercure_return_status = 'received') as mercure_returned,
-            COUNT(*) FILTER (WHERE mercure_sent_status = 'success' 
-                            AND mercure_return_status = 'waiting'
-                            AND updated_at < NOW() - INTERVAL '30 minutes') as mercure_no_response,
-            
-            -- LPCH routing
-            COUNT(*) FILTER (WHERE lpch_status = 'success') as lpch_success,
-            COUNT(*) FILTER (WHERE lpch_status = 'failed') as lpch_failed,
-            COUNT(*) FILTER (WHERE lpcht_status = 'success') as lpcht_success,
-            COUNT(*) FILTER (WHERE lpcht_status = 'failed') as lpcht_failed,
-            
-            -- MODLINK routing
-            COUNT(*) FILTER (WHERE modlink_status = 'success') as modlink_success,
-            COUNT(*) FILTER (WHERE modlink_status = 'failed') as modlink_failed
-            
-        FROM study_workflows
-        WHERE created_at > NOW() - INTERVAL '%s hours'
-    """, (hours,))
-    stages = cur.fetchone()
-    
-    # Failure breakdown by stage
-    cur.execute("""
-        SELECT error_stage, COUNT(*) as count
-        FROM study_workflows
-        WHERE workflow_status = 'failed'
-          AND created_at > NOW() - INTERVAL '%s hours'
-        GROUP BY error_stage
-        ORDER BY count DESC
-    """, (hours,))
-    failures_by_stage = cur.fetchall()
-    
-    # Average processing times
-    cur.execute("""
-        SELECT 
-            AVG(EXTRACT(EPOCH FROM (mercure_returned_at - mercure_sent_at))/60) 
-                FILTER (WHERE mercure_returned_at IS NOT NULL) as avg_mercure_time_minutes,
-            AVG(EXTRACT(EPOCH FROM (updated_at - created_at))/60) 
-                FILTER (WHERE workflow_status = 'complete') as avg_total_time_minutes
-        FROM study_workflows
-        WHERE created_at > NOW() - INTERVAL '%s hours'
-    """, (hours,))
-    timing = cur.fetchone()
-    
-    cur.close()
-    conn.close()
-    
-    # Calculate success rates
-    def rate(success, total):
-        if total and total > 0:
-            return round(success / total * 100, 1)
-        return None
-    
-    mercure_total = (stages['mercure_sent_success'] or 0) + (stages['mercure_sent_failed'] or 0)
-    lpch_total = (stages['lpch_success'] or 0) + (stages['lpch_failed'] or 0)
-    modlink_total = (stages['modlink_success'] or 0) + (stages['modlink_failed'] or 0)
+    if not w:
+        return jsonify({'error': 'Not found'}), 404
     
     return jsonify({
-        'time_range_hours': hours,
-        'overall': {
-            'total': overall['total'] or 0,
-            'complete': overall['complete'] or 0,
-            'failed': overall['failed'] or 0,
-            'in_progress': overall['in_progress'] or 0,
-            'stuck': overall['stuck'] or 0,
-            'success_rate': rate(overall['complete'], overall['total'])
-        },
+        'study_id': w['study_id'],
+        'patient_name': w['patient_name'],
+        'study_description': w['study_description'],
         'stages': {
-            'mercure_send': {
-                'success': stages['mercure_sent_success'] or 0,
-                'failed': stages['mercure_sent_failed'] or 0,
-                'success_rate': rate(stages['mercure_sent_success'], mercure_total)
-            },
-            'mercure_return': {
-                'received': stages['mercure_returned'] or 0,
-                'no_response': stages['mercure_no_response'] or 0
-            },
-            'lpch': {
-                'success': stages['lpch_success'] or 0,
-                'failed': stages['lpch_failed'] or 0,
-                'success_rate': rate(stages['lpch_success'], lpch_total)
-            },
-            'lpcht': {
-                'success': stages['lpcht_success'] or 0,
-                'failed': stages['lpcht_failed'] or 0,
-                'success_rate': rate(stages['lpcht_success'], lpch_total)
-            },
-            'modlink': {
-                'success': stages['modlink_success'] or 0,
-                'failed': stages['modlink_failed'] or 0,
-                'success_rate': rate(stages['modlink_success'], modlink_total)
-            }
-        },
-        'failures_by_stage': failures_by_stage,
-        'timing': {
-            'avg_mercure_response_minutes': round(timing['avg_mercure_time_minutes'], 1) if timing['avg_mercure_time_minutes'] else None,
-            'avg_total_workflow_minutes': round(timing['avg_total_time_minutes'], 1) if timing['avg_total_time_minutes'] else None
+            'mercure': {'status': 'success' if w['mercure_send_success'] else ('failed' if w['mercure_send_success'] is False else 'pending'), 'error': w['mercure_send_error']},
+            'ai_results': {'status': 'received' if w['ai_results_received'] else 'waiting'},
+            'lpch': {'status': 'success' if w['lpch_send_success'] else ('failed' if w['lpch_send_success'] is False else 'pending'), 'error': w['lpch_send_error']},
+            'lpcht': {'status': 'success' if w['lpcht_send_success'] else ('failed' if w['lpcht_send_success'] is False else 'pending'), 'error': w['lpcht_send_error']},
+            'modlink': {'status': 'success' if w['modlink_send_success'] else ('failed' if w['modlink_send_success'] is False else 'pending'), 'error': w['modlink_send_error']}
         }
     })
 
 
-@app.route('/workflow/stats/destinations', methods=['GET'])
-def get_destination_stats():
-    """Get per-destination statistics (for backward compatibility with old UI)"""
+# ═══════════════════════════════════════════════════════════════════════════════
+# FUNNEL / AGGREGATE STATS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route('/funnel', methods=['GET'])
+def get_funnel():
+    """Get funnel/Sankey data showing flow through pipeline stages"""
     hours = request.args.get('hours', 24, type=int)
     
     conn = get_db()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
-    # Build destination stats from workflow data
     cur.execute("""
         SELECT 
-            'MERCURE' as destination,
-            COUNT(*) FILTER (WHERE mercure_sent_status = 'success') as success,
-            COUNT(*) FILTER (WHERE mercure_sent_status = 'failed') as failed,
-            COUNT(*) FILTER (WHERE mercure_sent_status = 'pending') as pending,
-            MAX(mercure_sent_at) as last_activity
+            -- Total studies that entered the pipeline
+            COUNT(*) as total_studies,
+            
+            -- Stage 1: Sent to MERCURE
+            COUNT(*) FILTER (WHERE mercure_sent_at IS NOT NULL) as mercure_attempted,
+            COUNT(*) FILTER (WHERE mercure_send_success = TRUE) as mercure_sent_ok,
+            COUNT(*) FILTER (WHERE mercure_send_success = FALSE) as mercure_sent_failed,
+            
+            -- Stage 2: AI Results received
+            COUNT(*) FILTER (WHERE ai_results_received = TRUE) as ai_results_received,
+            COUNT(*) FILTER (WHERE mercure_send_success = TRUE AND ai_results_received = FALSE) as ai_results_waiting,
+            
+            -- Stage 3a: LPCH Router
+            COUNT(*) FILTER (WHERE lpch_sent_at IS NOT NULL) as lpch_attempted,
+            COUNT(*) FILTER (WHERE lpch_send_success = TRUE) as lpch_sent_ok,
+            COUNT(*) FILTER (WHERE lpch_send_success = FALSE) as lpch_sent_failed,
+            
+            -- Stage 3b: LPCH T Router
+            COUNT(*) FILTER (WHERE lpcht_sent_at IS NOT NULL) as lpcht_attempted,
+            COUNT(*) FILTER (WHERE lpcht_send_success = TRUE) as lpcht_sent_ok,
+            COUNT(*) FILTER (WHERE lpcht_send_success = FALSE) as lpcht_sent_failed,
+            
+            -- Stage 3c: MODLINK
+            COUNT(*) FILTER (WHERE modlink_sent_at IS NOT NULL) as modlink_attempted,
+            COUNT(*) FILTER (WHERE modlink_send_success = TRUE) as modlink_sent_ok,
+            COUNT(*) FILTER (WHERE modlink_send_success = FALSE) as modlink_sent_failed,
+            
+            -- Fully complete (AI results + all destinations)
+            COUNT(*) FILTER (WHERE 
+                ai_results_received = TRUE AND
+                lpch_send_success = TRUE AND
+                lpcht_send_success = TRUE AND
+                modlink_send_success = TRUE
+            ) as fully_complete
+            
         FROM study_workflows
         WHERE created_at > NOW() - INTERVAL '%s hours'
-        
-        UNION ALL
-        
-        SELECT 
-            'LPCHROUTER' as destination,
-            COUNT(*) FILTER (WHERE lpch_status = 'success') as success,
-            COUNT(*) FILTER (WHERE lpch_status = 'failed') as failed,
-            COUNT(*) FILTER (WHERE lpch_status = 'pending') as pending,
-            MAX(lpch_sent_at) as last_activity
-        FROM study_workflows
-        WHERE created_at > NOW() - INTERVAL '%s hours'
-        
-        UNION ALL
-        
-        SELECT 
-            'LPCHTROUTER' as destination,
-            COUNT(*) FILTER (WHERE lpcht_status = 'success') as success,
-            COUNT(*) FILTER (WHERE lpcht_status = 'failed') as failed,
-            COUNT(*) FILTER (WHERE lpcht_status = 'pending') as pending,
-            MAX(lpcht_sent_at) as last_activity
-        FROM study_workflows
-        WHERE created_at > NOW() - INTERVAL '%s hours'
-        
-        UNION ALL
-        
-        SELECT 
-            'MODLINK' as destination,
-            COUNT(*) FILTER (WHERE modlink_status = 'success') as success,
-            COUNT(*) FILTER (WHERE modlink_status = 'failed') as failed,
-            COUNT(*) FILTER (WHERE modlink_status = 'pending') as pending,
-            MAX(modlink_sent_at) as last_activity
-        FROM study_workflows
-        WHERE created_at > NOW() - INTERVAL '%s hours'
-    """, (hours, hours, hours, hours))
+    """, (hours,))
     
-    results = cur.fetchall()
+    stats = cur.fetchone()
     cur.close()
     conn.close()
     
-    # Calculate success rates and format
-    stats = []
-    for row in results:
-        total = (row['success'] or 0) + (row['failed'] or 0)
-        stats.append({
-            'destination': row['destination'],
-            'success': row['success'] or 0,
-            'failed': row['failed'] or 0,
-            'pending': row['pending'] or 0,
-            'success_rate': round(row['success'] / total * 100, 1) if total > 0 else None,
-            'last_activity': row['last_activity'].isoformat() if row['last_activity'] else None
-        })
+    # Build funnel data structure
+    total = stats['total_studies'] or 0
     
-    return jsonify(stats)
+    def pct(n):
+        return round(n / total * 100, 1) if total > 0 else 0
+    
+    funnel = {
+        'time_range_hours': hours,
+        'total_studies': total,
+        
+        'stages': [
+            {
+                'name': 'Studies Received',
+                'count': total,
+                'percent': 100
+            },
+            {
+                'name': 'Sent to MERCURE',
+                'count': stats['mercure_sent_ok'] or 0,
+                'percent': pct(stats['mercure_sent_ok'] or 0),
+                'failed': stats['mercure_sent_failed'] or 0,
+                'failed_reason': 'Send failed'
+            },
+            {
+                'name': 'AI Results Received',
+                'count': stats['ai_results_received'] or 0,
+                'percent': pct(stats['ai_results_received'] or 0),
+                'waiting': stats['ai_results_waiting'] or 0,
+                'waiting_reason': 'Waiting for MERCURE response'
+            },
+            {
+                'name': 'Routed to LPCH',
+                'count': stats['lpch_sent_ok'] or 0,
+                'percent': pct(stats['lpch_sent_ok'] or 0),
+                'failed': stats['lpch_sent_failed'] or 0
+            },
+            {
+                'name': 'Routed to LPCHT',
+                'count': stats['lpcht_sent_ok'] or 0,
+                'percent': pct(stats['lpcht_sent_ok'] or 0),
+                'failed': stats['lpcht_sent_failed'] or 0
+            },
+            {
+                'name': 'Routed to MODLINK',
+                'count': stats['modlink_sent_ok'] or 0,
+                'percent': pct(stats['modlink_sent_ok'] or 0),
+                'failed': stats['modlink_sent_failed'] or 0
+            },
+            {
+                'name': 'Fully Complete',
+                'count': stats['fully_complete'] or 0,
+                'percent': pct(stats['fully_complete'] or 0)
+            }
+        ],
+        
+        # Summary metrics
+        'summary': {
+            'mercure_success_rate': round((stats['ai_results_received'] or 0) / (stats['mercure_sent_ok'] or 1) * 100, 1) if stats['mercure_sent_ok'] else None,
+            'overall_success_rate': pct(stats['fully_complete'] or 0),
+            'drop_off': {
+                'mercure_send': stats['mercure_sent_failed'] or 0,
+                'ai_no_response': stats['ai_results_waiting'] or 0,
+                'lpch_failed': stats['lpch_sent_failed'] or 0,
+                'lpcht_failed': stats['lpcht_sent_failed'] or 0,
+                'modlink_failed': stats['modlink_sent_failed'] or 0
+            }
+        }
+    }
+    
+    return jsonify(funnel)
 
 
-# Keep old endpoint for backward compatibility
+# Backward compatibility
 @app.route('/routing/stats', methods=['GET'])
+@app.route('/workflow/stats/destinations', methods=['GET'])
 def routing_stats_compat():
-    """Backward compatible routing stats endpoint"""
-    return get_destination_stats()
+    """Backward compatible per-destination stats"""
+    hours = request.args.get('hours', 24, type=int)
+    
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    
+    cur.execute("""
+        SELECT 
+            COUNT(*) FILTER (WHERE mercure_send_success = TRUE) as mercure_success,
+            COUNT(*) FILTER (WHERE mercure_send_success = FALSE) as mercure_failed,
+            COUNT(*) FILTER (WHERE mercure_sent_at IS NULL) as mercure_pending,
+            
+            COUNT(*) FILTER (WHERE lpch_send_success = TRUE) as lpch_success,
+            COUNT(*) FILTER (WHERE lpch_send_success = FALSE) as lpch_failed,
+            COUNT(*) FILTER (WHERE ai_results_received = TRUE AND lpch_sent_at IS NULL) as lpch_pending,
+            
+            COUNT(*) FILTER (WHERE lpcht_send_success = TRUE) as lpcht_success,
+            COUNT(*) FILTER (WHERE lpcht_send_success = FALSE) as lpcht_failed,
+            COUNT(*) FILTER (WHERE ai_results_received = TRUE AND lpcht_sent_at IS NULL) as lpcht_pending,
+            
+            COUNT(*) FILTER (WHERE modlink_send_success = TRUE) as modlink_success,
+            COUNT(*) FILTER (WHERE modlink_send_success = FALSE) as modlink_failed,
+            COUNT(*) FILTER (WHERE ai_results_received = TRUE AND modlink_sent_at IS NULL) as modlink_pending
+            
+        FROM study_workflows
+        WHERE created_at > NOW() - INTERVAL '%s hours'
+    """, (hours,))
+    
+    s = cur.fetchone()
+    cur.close()
+    conn.close()
+    
+    def rate(success, failed):
+        total = (success or 0) + (failed or 0)
+        return round(success / total * 100, 1) if total > 0 else None
+    
+    return jsonify([
+        {'destination': 'MERCURE', 'success': s['mercure_success'] or 0, 'failed': s['mercure_failed'] or 0, 'pending': s['mercure_pending'] or 0, 'success_rate': rate(s['mercure_success'], s['mercure_failed'])},
+        {'destination': 'LPCHROUTER', 'success': s['lpch_success'] or 0, 'failed': s['lpch_failed'] or 0, 'pending': s['lpch_pending'] or 0, 'success_rate': rate(s['lpch_success'], s['lpch_failed'])},
+        {'destination': 'LPCHTROUTER', 'success': s['lpcht_success'] or 0, 'failed': s['lpcht_failed'] or 0, 'pending': s['lpcht_pending'] or 0, 'success_rate': rate(s['lpcht_success'], s['lpcht_failed'])},
+        {'destination': 'MODLINK', 'success': s['modlink_success'] or 0, 'failed': s['modlink_failed'] or 0, 'pending': s['modlink_pending'] or 0, 'success_rate': rate(s['modlink_success'], s['modlink_failed'])}
+    ])
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -612,24 +488,19 @@ def routing_stats_compat():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def init_on_startup():
-    """Initialize database when app starts"""
     import time
-    max_retries = 10
-    for attempt in range(max_retries):
+    for attempt in range(10):
         try:
-            print(f"Initializing workflow database (attempt {attempt + 1}/{max_retries})...")
+            print(f"Initializing database (attempt {attempt + 1}/10)...")
             init_db()
-            print("Database initialized successfully!")
+            print("Database ready!")
             return
         except Exception as e:
-            print(f"Database init failed: {e}")
-            if attempt < max_retries - 1:
+            print(f"Init failed: {e}")
+            if attempt < 9:
                 time.sleep(2)
-    print("WARNING: Could not initialize database after retries")
 
-# Run init when module loads
 init_on_startup()
 
 if __name__ == '__main__':
-    print("Starting routing workflow API on port 5000...")
     app.run(host='0.0.0.0', port=5000)
