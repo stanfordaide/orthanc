@@ -142,7 +142,7 @@ volumes:
       type: 'none'
       o: 'bind'
       device: '${DICOM_STORAGE:-/opt/orthanc/orthanc-storage}'
-
+  
   orthanc-db-data:
     driver: local
     driver_opts:

@@ -243,6 +243,25 @@ parse_args() {
 # EXISTING INSTALLATION CHECK
 # ─────────────────────────────────────────────────────────────────────────────────
 
+count_studies() {
+    local storage_path="$1"
+    if [[ -d "$storage_path" ]]; then
+        # Count directories that look like Orthanc study storage
+        find "$storage_path" -maxdepth 2 -type d 2>/dev/null | wc -l
+    else
+        echo "0"
+    fi
+}
+
+get_db_size() {
+    local db_path="$1"
+    if [[ -d "$db_path" ]]; then
+        du -sh "$db_path" 2>/dev/null | cut -f1
+    else
+        echo "0"
+    fi
+}
+
 check_existing() {
     # Skip check if force flag is set
     if [[ "$FORCE_SETUP" == true ]]; then
@@ -253,13 +272,50 @@ check_existing() {
     
     local has_env=false
     local has_containers=false
-    local has_data=false
+    local has_dicom_data=false
+    local has_db_data=false
+    local existing_dicom_path=""
+    local existing_db_path=""
+    local dicom_size=""
+    local db_size=""
     
-    [[ -f ".env" ]] && has_env=true
+    # Check for .env
+    if [[ -f ".env" ]]; then
+        has_env=true
+        source .env 2>/dev/null || true
+        existing_dicom_path="${DICOM_STORAGE:-}"
+        existing_db_path="${POSTGRES_STORAGE:-}"
+    fi
+    
+    # Check for running containers
     docker compose ps --quiet 2>/dev/null | grep -q . && has_containers=true
-    [[ -d "$DEFAULT_DICOM_STORAGE" ]] || [[ -d "$DEFAULT_POSTGRES_STORAGE" ]] && has_data=true
     
-    if [[ "$has_env" == true ]] || [[ "$has_containers" == true ]]; then
+    # Check for existing data in configured paths
+    if [[ -n "$existing_dicom_path" ]] && [[ -d "$existing_dicom_path" ]]; then
+        dicom_size=$(du -sh "$existing_dicom_path" 2>/dev/null | cut -f1)
+        [[ "$dicom_size" != "0" ]] && [[ "$dicom_size" != "4.0K" ]] && has_dicom_data=true
+    fi
+    
+    if [[ -n "$existing_db_path" ]] && [[ -d "$existing_db_path" ]]; then
+        db_size=$(du -sh "$existing_db_path" 2>/dev/null | cut -f1)
+        [[ "$db_size" != "0" ]] && [[ "$db_size" != "4.0K" ]] && has_db_data=true
+    fi
+    
+    # Also check default paths
+    if [[ -d "$DEFAULT_DICOM_STORAGE" ]] && [[ -z "$existing_dicom_path" ]]; then
+        existing_dicom_path="$DEFAULT_DICOM_STORAGE"
+        dicom_size=$(du -sh "$DEFAULT_DICOM_STORAGE" 2>/dev/null | cut -f1)
+        [[ "$dicom_size" != "0" ]] && [[ "$dicom_size" != "4.0K" ]] && has_dicom_data=true
+    fi
+    
+    if [[ -d "$DEFAULT_POSTGRES_STORAGE" ]] && [[ -z "$existing_db_path" ]]; then
+        existing_db_path="$DEFAULT_POSTGRES_STORAGE"
+        db_size=$(du -sh "$DEFAULT_POSTGRES_STORAGE" 2>/dev/null | cut -f1)
+        [[ "$db_size" != "0" ]] && [[ "$db_size" != "4.0K" ]] && has_db_data=true
+    fi
+    
+    # Display findings
+    if [[ "$has_env" == true ]] || [[ "$has_containers" == true ]] || [[ "$has_dicom_data" == true ]] || [[ "$has_db_data" == true ]]; then
         echo
         echo -e "${YELLOW}╔═══════════════════════════════════════════════════════════════╗${NC}"
         echo -e "${YELLOW}║  ⚠️  EXISTING INSTALLATION DETECTED                           ║${NC}"
@@ -268,11 +324,9 @@ check_existing() {
         
         if [[ "$has_env" == true ]]; then
             echo -e "  ${CYAN}Found:${NC} .env configuration file"
-            # Load existing values
-            source .env 2>/dev/null || true
-            echo "         DICOM_STORAGE=$DICOM_STORAGE"
-            echo "         POSTGRES_STORAGE=$POSTGRES_STORAGE"
-            echo "         ORTHANC_AET=$ORTHANC_AET"
+            echo "         DICOM_STORAGE=${existing_dicom_path:-not set}"
+            echo "         POSTGRES_STORAGE=${existing_db_path:-not set}"
+            echo "         ORTHANC_AET=${ORTHANC_AET:-not set}"
         fi
         
         if [[ "$has_containers" == true ]]; then
@@ -280,28 +334,49 @@ check_existing() {
             docker compose ps --format "table {{.Name}}\t{{.Status}}" 2>/dev/null | head -5
         fi
         
+        # Show existing data prominently
+        if [[ "$has_dicom_data" == true ]] || [[ "$has_db_data" == true ]]; then
+            echo
+            echo -e "  ${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
+            echo -e "  ${GREEN}║  📁  EXISTING DATA FOUND (will be preserved)              ║${NC}"
+            echo -e "  ${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
+            if [[ "$has_dicom_data" == true ]]; then
+                echo -e "       DICOM files:    ${CYAN}$dicom_size${NC} in $existing_dicom_path"
+            fi
+            if [[ "$has_db_data" == true ]]; then
+                echo -e "       Database:       ${CYAN}$db_size${NC} in $existing_db_path"
+            fi
+            echo
+            echo -e "  ${GREEN}✓${NC}  Your studies and metadata will NOT be deleted."
+            echo -e "  ${GREEN}✓${NC}  Setup will reconnect to existing data."
+        fi
+        
         echo
         
         if [[ "$NON_INTERACTIVE" == true ]]; then
-            log_info "Non-interactive mode: will update configuration"
+            log_info "Non-interactive mode: will update configuration (preserving data)"
             return 0
         fi
         
         echo "What would you like to do?"
-        echo "  1) Update configuration (keeps existing data)"
-        echo "  2) Keep existing configuration (just verify/start)"
-        echo "  3) Cancel"
+        echo -e "  ${GREEN}1)${NC} Reinstall/Update (${GREEN}keeps all your studies${NC})"
+        echo -e "  2) Keep existing configuration (just start services)"
+        echo -e "  ${RED}3) Fresh install (WARNING: deletes all data!)${NC}"
+        echo "  4) Cancel"
         echo
-        read -p "Choice [1-3]: " choice
+        read -p "Choice [1-4]: " choice
         
         case "$choice" in
             1)
-                log_info "Will update configuration..."
+                log_info "Will update configuration (preserving existing data)..."
                 # Stop containers before updating
                 if [[ "$has_containers" == true ]]; then
                     log_info "Stopping existing containers..."
                     docker compose down 2>/dev/null || true
                 fi
+                # Preserve existing storage paths as defaults
+                DICOM_STORAGE="${existing_dicom_path:-$DEFAULT_DICOM_STORAGE}"
+                POSTGRES_STORAGE="${existing_db_path:-$DEFAULT_POSTGRES_STORAGE}"
                 return 0
                 ;;
             2)
@@ -315,7 +390,34 @@ check_existing() {
                 USE_EXISTING=true
                 return 0
                 ;;
-            3|*)
+            3)
+                echo
+                echo -e "${RED}╔═══════════════════════════════════════════════════════════════╗${NC}"
+                echo -e "${RED}║  🚨  DANGER: THIS WILL DELETE ALL YOUR DATA!                 ║${NC}"
+                echo -e "${RED}╚═══════════════════════════════════════════════════════════════╝${NC}"
+                echo
+                if [[ "$has_dicom_data" == true ]]; then
+                    echo -e "  Will delete: ${RED}$dicom_size${NC} of DICOM files"
+                fi
+                if [[ "$has_db_data" == true ]]; then
+                    echo -e "  Will delete: ${RED}$db_size${NC} of database"
+                fi
+                echo
+                read -p "Type 'DELETE ALL DATA' to confirm: " confirm
+                if [[ "$confirm" == "DELETE ALL DATA" ]]; then
+                    log_warn "Deleting all existing data..."
+                    docker compose down -v 2>/dev/null || true
+                    [[ -n "$existing_dicom_path" ]] && rm -rf "$existing_dicom_path"/* 2>/dev/null
+                    [[ -n "$existing_db_path" ]] && rm -rf "$existing_db_path"/* 2>/dev/null
+                    rm -f .env 2>/dev/null
+                    log_success "All data deleted. Proceeding with fresh install..."
+                    return 0
+                else
+                    log_info "Cancelled. Your data is safe."
+                    exit 0
+                fi
+                ;;
+            4|*)
                 echo "Setup cancelled."
                 exit 0
                 ;;
