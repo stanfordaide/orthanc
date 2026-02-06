@@ -547,6 +547,14 @@ OPERATOR_UI_PORT=8040
 ORTHANC_WEB_PORT=8041
 OHIF_PORT=8042
 POSTGRES_PORT=8043
+ROUTING_API_PORT=8044
+GRAFANA_PORT=8045
+
+# ─────────────────────────────────────────────────────────────────────────────────
+# GRAFANA CREDENTIALS
+# ─────────────────────────────────────────────────────────────────────────────────
+GRAFANA_USER=admin
+GRAFANA_PASSWORD=admin
 
 # ─────────────────────────────────────────────────────────────────────────────────
 # DICOM SETTINGS
@@ -621,6 +629,13 @@ create_directories() {
     sudo chown -R 999:999 "$POSTGRES_STORAGE" 2>/dev/null || \
         chown -R 999:999 "$POSTGRES_STORAGE" 2>/dev/null || \
         log_warn "Could not set ownership on $POSTGRES_STORAGE"
+    
+    # Grafana provisioning directories
+    log_info "Setting up Grafana configuration..."
+    mkdir -p "$SCRIPT_DIR/grafana/provisioning/datasources" 2>/dev/null || true
+    mkdir -p "$SCRIPT_DIR/grafana/provisioning/dashboards" 2>/dev/null || true
+    mkdir -p "$SCRIPT_DIR/grafana/dashboards" 2>/dev/null || true
+    log_success "Grafana directories ready"
 }
 
 make_executable() {
@@ -710,6 +725,7 @@ print_completion() {
     echo -e "  📊 Dashboard:    ${YELLOW}http://localhost:8040${NC}"
     echo -e "  🏥 Orthanc UI:   ${YELLOW}http://localhost:8041${NC}"
     echo -e "  🖼️  OHIF Viewer:  ${YELLOW}http://localhost:8042${NC}"
+    echo -e "  📈 Grafana QI:   ${YELLOW}http://localhost:8045${NC}"
     echo -e "  📡 DICOM Port:   ${YELLOW}$ORTHANC_AET @ port 4242${NC}"
     echo
     echo -e "${CYAN}CLI commands:${NC}"
@@ -720,6 +736,7 @@ print_completion() {
     echo -e "${CYAN}Credentials (saved in .env):${NC}"
     echo "  Orthanc:    orthanc_admin / $ORTHANC_PASSWORD"
     echo "  PostgreSQL: orthanc / $POSTGRES_PASSWORD"
+    echo "  Grafana:    admin / admin (change after first login)"
     echo
 }
 

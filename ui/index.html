@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Orthanc Operator Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -415,6 +416,30 @@
                 </div>
             </div>
         </section>
+
+        <!-- Pipeline Trends Section -->
+        <section class="mt-6 bg-midnight-800 rounded-xl border border-midnight-600 overflow-hidden">
+            <div class="px-5 py-4 border-b border-midnight-600 flex justify-between items-center">
+                <h2 class="font-semibold flex items-center gap-2">
+                    <span class="text-xl">📈</span> Pipeline Trends
+                </h2>
+                <select x-model="trendHours" @change="loadTrends()" 
+                        class="bg-midnight-700 border border-midnight-600 rounded px-2 py-1 text-sm">
+                    <option value="24">Last 24h</option>
+                    <option value="72">Last 3 days</option>
+                    <option value="168">Last 7 days</option>
+                </select>
+            </div>
+            <div class="p-5">
+                <div x-show="trendData.length > 0" class="h-64">
+                    <canvas id="trendsChart"></canvas>
+                </div>
+                <div x-show="trendData.length === 0" class="text-center text-slate-500 py-8">
+                    <div class="text-4xl mb-2">📈</div>
+                    No trend data available. Process some studies to see trends over time.
+                </div>
+            </div>
+        </section>
         
         <!-- Recent Workflows Section -->
         <section class="mt-6 bg-midnight-800 rounded-xl border border-midnight-600 overflow-hidden">
@@ -806,6 +831,9 @@ function dashboard() {
         routingStats: [],
         funnel: null,
         recentWorkflows: [],
+        trendData: [],
+        trendHours: 24,
+        trendsChart: null,
         searchQuery: '',
         selectedStudy: null,
         showStuckModal: false,
@@ -900,6 +928,7 @@ function dashboard() {
                 this.loadRecentStudies(),
                 this.loadStuck(),
                 this.loadRoutingStats(),
+                this.loadTrends(),
             ]);
             
             this.loading = false;
@@ -1109,6 +1138,110 @@ function dashboard() {
                 console.error('Failed to load routing stats:', e);
                 this.routingStats = [];
             }
+        },
+
+        async loadTrends() {
+            try {
+                const interval = this.trendHours > 48 ? 'day' : 'hour';
+                const response = await fetch(`/api/funnel/timeseries?hours=${this.trendHours}&interval=${interval}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    this.trendData = data.data || [];
+                    this.renderTrendsChart();
+                }
+            } catch (e) {
+                console.error('Failed to load trends:', e);
+                this.trendData = [];
+            }
+        },
+
+        renderTrendsChart() {
+            const canvas = document.getElementById('trendsChart');
+            if (!canvas || this.trendData.length === 0) return;
+
+            // Destroy existing chart
+            if (this.trendsChart) {
+                this.trendsChart.destroy();
+            }
+
+            const labels = this.trendData.map(d => d.time_bucket);
+            
+            this.trendsChart = new Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Studies Received',
+                            data: this.trendData.map(d => d.studies_received),
+                            borderColor: '#64748b',
+                            backgroundColor: 'rgba(100, 116, 139, 0.1)',
+                            tension: 0.3,
+                            fill: false
+                        },
+                        {
+                            label: 'Sent to MERCURE',
+                            data: this.trendData.map(d => d.mercure_sent),
+                            borderColor: '#8b5cf6',
+                            backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                            tension: 0.3,
+                            fill: false
+                        },
+                        {
+                            label: 'AI Results Back',
+                            data: this.trendData.map(d => d.ai_results),
+                            borderColor: '#06b6d4',
+                            backgroundColor: 'rgba(6, 182, 212, 0.1)',
+                            tension: 0.3,
+                            fill: false
+                        },
+                        {
+                            label: 'Fully Complete',
+                            data: this.trendData.map(d => d.fully_complete),
+                            borderColor: '#10b981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            tension: 0.3,
+                            fill: false
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                color: '#94a3b8',
+                                usePointStyle: true,
+                                padding: 20
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: '#1e293b',
+                            titleColor: '#f1f5f9',
+                            bodyColor: '#cbd5e1',
+                            borderColor: '#334155',
+                            borderWidth: 1
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { color: '#334155' },
+                            ticks: { color: '#64748b', maxRotation: 45 }
+                        },
+                        y: {
+                            grid: { color: '#334155' },
+                            ticks: { color: '#64748b' },
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
         },
         
         async testDestination(name) {

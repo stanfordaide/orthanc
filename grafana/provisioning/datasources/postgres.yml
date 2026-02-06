@@ -1,0 +1,20 @@
+apiVersion: 1
+
+datasources:
+  - name: Orthanc PostgreSQL
+    uid: orthanc-postgres
+    type: postgres
+    url: orthanc-db:5432
+    database: orthanc
+    user: orthanc
+    secureJsonData:
+      password: $POSTGRES_PASSWORD
+    jsonData:
+      sslmode: disable
+      maxOpenConns: 5
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+      postgresVersion: 1500
+      timescaledb: false
+    isDefault: true
+    editable: true

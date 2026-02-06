@@ -152,6 +152,36 @@ services:
       retries: 5
       start_period: 30s
 
+  # ─────────────────────────────────────────────────────────────────────────────
+  # GRAFANA - Quality Improvement Dashboards
+  # ─────────────────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: orthanc-grafana
+    ports:
+      - "${GRAFANA_PORT:-8045}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-clock-panel
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-ChangeThisPassword}
+      - TZ=${TZ:-America/Los_Angeles}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      orthanc-db:
+        condition: service_healthy
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECRETS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -173,6 +203,8 @@ networks:
 # Default: /opt/orthanc/orthanc-storage and /opt/orthanc/postgres-data
 # ═══════════════════════════════════════════════════════════════════════════════
 volumes:
+  grafana-data:
+
   orthanc-storage:
     driver: local
     driver_opts:

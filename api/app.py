@@ -626,6 +626,55 @@ def get_funnel():
     return jsonify(funnel)
 
 
+@app.route('/funnel/timeseries', methods=['GET'])
+def get_funnel_timeseries():
+    """Get time-bucketed funnel stats for trend visualization"""
+    hours = request.args.get('hours', 24, type=int)
+    interval = request.args.get('interval', 'hour')  # 'hour' or 'day'
+    
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    
+    # Choose time bucket based on interval
+    if interval == 'day':
+        time_bucket = "date_trunc('day', created_at)"
+        format_str = 'YYYY-MM-DD'
+    else:
+        time_bucket = "date_trunc('hour', created_at)"
+        format_str = 'YYYY-MM-DD HH24:00'
+    
+    cur.execute(f"""
+        SELECT 
+            to_char({time_bucket}, '{format_str}') as time_bucket,
+            COUNT(*) as studies_received,
+            COUNT(*) FILTER (WHERE mercure_send_success = TRUE) as mercure_sent,
+            COUNT(*) FILTER (WHERE ai_results_received = TRUE) as ai_results,
+            COUNT(*) FILTER (WHERE lpch_send_success = TRUE) as lpch_routed,
+            COUNT(*) FILTER (WHERE lpcht_send_success = TRUE) as lpcht_routed,
+            COUNT(*) FILTER (WHERE modlink_send_success = TRUE) as modlink_routed,
+            COUNT(*) FILTER (WHERE 
+                ai_results_received = TRUE AND
+                lpch_send_success = TRUE AND
+                lpcht_send_success = TRUE AND
+                modlink_send_success = TRUE
+            ) as fully_complete
+        FROM study_workflows
+        WHERE created_at > NOW() - INTERVAL '{hours} hours'
+        GROUP BY {time_bucket}
+        ORDER BY {time_bucket} ASC
+    """)
+    
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    
+    return jsonify({
+        'interval': interval,
+        'hours': hours,
+        'data': rows
+    })
+
+
 # Backward compatibility
 @app.route('/routing/stats', methods=['GET'])
 @app.route('/workflow/stats/destinations', methods=['GET'])

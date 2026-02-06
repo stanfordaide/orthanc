@@ -50,6 +50,8 @@ help:
 	@echo "  8040  Operator Dashboard"
 	@echo "  8041  Orthanc Web UI / API"
 	@echo "  8042  OHIF Viewer"
+	@echo "  8044  Routing API"
+	@echo "  8045  Grafana QI Dashboards"
 	@echo "  4242  DICOM"
 	@echo ""
 	@echo "EXAMPLES"
