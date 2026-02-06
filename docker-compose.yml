@@ -7,6 +7,7 @@
 #   - orthanc      : PACS Server + API (port 8041, DICOM 4242)
 #   - ohif         : DICOM Viewer (port 8042)
 #   - orthanc-db   : PostgreSQL Database (port 8043)
+#   - routing-api  : Routing Statistics API (port 8044)
 #
 # Quick start:
 #   cp config/env.template .env
@@ -114,6 +115,31 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # ROUTING API - Tracks routing statistics in PostgreSQL
+  # ─────────────────────────────────────────────────────────────────────────────
+  routing-api:
+    build: ./api
+    container_name: orthanc-routing-api
+    ports:
+      - "${ROUTING_API_PORT:-8044}:5000"
+    environment:
+      - DB_HOST=orthanc-db
+      - DB_PORT=5432
+      - DB_NAME=orthanc
+      - DB_USER=${POSTGRES_USER:-orthanc}
+      - DB_PASS=${POSTGRES_PASSWORD:-ChangeThisPassword}
+      - TZ=${TZ:-America/Los_Angeles}
+    depends_on:
+      orthanc-db:
+        condition: service_healthy
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECRETS

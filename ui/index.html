@@ -317,15 +317,33 @@
                     <div class="text-4xl mb-2">📊</div>
                     No send jobs found. Stats appear when studies are sent to destinations.
                 </div>
-                <div x-show="routingStats.length > 0" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div x-show="routingStats.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     <template x-for="stat in routingStats" :key="stat.destination">
                         <div class="bg-midnight-700 rounded-lg p-4">
-                            <div class="font-mono text-sm mb-2" x-text="stat.destination"></div>
-                            <div class="flex justify-between text-xs">
-                                <span class="text-neon-green">✓ <span x-text="stat.success"></span></span>
-                                <span class="text-neon-red">✗ <span x-text="stat.failed"></span></span>
-                                <span class="text-neon-yellow">⏳ <span x-text="stat.pending"></span></span>
+                            <div class="flex justify-between items-start mb-3">
+                                <div class="font-mono text-sm font-medium" x-text="stat.destination"></div>
+                                <div class="text-xs px-2 py-0.5 rounded-full"
+                                     :class="stat.success_rate >= 90 ? 'bg-neon-green/20 text-neon-green' : 
+                                             stat.success_rate >= 50 ? 'bg-neon-yellow/20 text-neon-yellow' : 
+                                             'bg-neon-red/20 text-neon-red'"
+                                     x-text="stat.success_rate !== null ? stat.success_rate + '%' : '—'"></div>
                             </div>
+                            <div class="grid grid-cols-3 gap-2 text-center text-xs">
+                                <div>
+                                    <div class="text-neon-green text-lg font-bold" x-text="stat.success || 0"></div>
+                                    <div class="text-slate-500">success</div>
+                                </div>
+                                <div>
+                                    <div class="text-neon-red text-lg font-bold" x-text="stat.failed || 0"></div>
+                                    <div class="text-slate-500">failed</div>
+                                </div>
+                                <div>
+                                    <div class="text-neon-yellow text-lg font-bold" x-text="stat.pending || 0"></div>
+                                    <div class="text-slate-500">pending</div>
+                                </div>
+                            </div>
+                            <div class="mt-2 text-xs text-slate-600 text-right" 
+                                 x-text="stat.last_activity ? 'Last: ' + new Date(stat.last_activity).toLocaleString() : ''"></div>
                         </div>
                     </template>
                 </div>
@@ -942,57 +960,10 @@ function dashboard() {
         
         async loadRoutingStats() {
             try {
-                // Get all jobs from Orthanc
-                const jobs = await this.api('/jobs?expand');
-                const allJobs = Array.isArray(jobs) ? jobs : [];
-                
-                // Log all job types for debugging
-                const jobTypes = [...new Set(allJobs.map(j => j.Type))];
-                if (jobTypes.length > 0) {
-                    console.log('Job types found:', jobTypes);
-                }
-                
-                // Job types that represent DICOM send operations
-                const sendJobTypes = [
-                    'DicomModalityStore',  // REST API store
-                    'StoreScuJob',         // Lua SendToModality
-                    'DicomStore',          // Alternative name
-                    'C-Store',             // DICOM C-STORE
-                ];
-                
-                // Aggregate by destination
-                const statsByDest = {};
-                
-                for (const job of allJobs) {
-                    // Check if it's a send job
-                    if (!sendJobTypes.includes(job.Type)) continue;
-                    
-                    // Extract destination from various possible fields
-                    const dest = job.Content?.RemoteModality 
-                              || job.Content?.Modality 
-                              || job.Content?.Remote
-                              || job.Content?.Destination
-                              || 'Unknown';
-                              
-                    if (!statsByDest[dest]) {
-                        statsByDest[dest] = { destination: dest, success: 0, failed: 0, pending: 0 };
-                    }
-                    
-                    if (job.State === 'Success') {
-                        statsByDest[dest].success++;
-                    } else if (job.State === 'Failure') {
-                        statsByDest[dest].failed++;
-                    } else if (job.State === 'Running' || job.State === 'Pending' || job.State === 'Paused' || job.State === 'Retry') {
-                        statsByDest[dest].pending++;
-                    }
-                }
-                
-                this.routingStats = Object.values(statsByDest);
-                
-                // Also log if we're not finding send jobs but have other jobs
-                if (this.routingStats.length === 0 && allJobs.length > 0) {
-                    console.log('Found jobs but none are send jobs. Sample job:', allJobs[0]);
-                }
+                // Fetch from routing stats API (persisted in PostgreSQL)
+                const response = await fetch('/api/routing/stats');
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                this.routingStats = await response.json();
             } catch (e) {
                 console.error('Failed to load routing stats:', e);
                 this.routingStats = [];

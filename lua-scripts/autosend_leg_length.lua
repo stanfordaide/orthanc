@@ -1,3 +1,27 @@
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- ROUTING TRACKER - Send events to PostgreSQL via routing-api
+-- ═══════════════════════════════════════════════════════════════════════════════
+ROUTING_API_URL = "http://routing-api:5000"
+
+function TrackRouting(studyId, destination, status, errorMessage)
+    local payload = {
+        study_id = studyId,
+        destination = destination,
+        status = status,
+        error = errorMessage
+    }
+    
+    pcall(function()
+        HttpPost(ROUTING_API_URL .. "/routing/event", DumpJson(payload), {
+            ["Content-Type"] = "application/json"
+        })
+    end)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- HELPER FUNCTIONS
+-- ═══════════════════════════════════════════════════════════════════════════════
+
 -- Helper function to safely convert table to string for debugging
 function tableToString(t, indent)
     if type(t) ~= "table" then
@@ -261,25 +285,31 @@ function OnStableStudy(studyId, tags, metadata, origin)
                             print('   ✓ Detected QA Visualization - routing to LPCHROUTER and LPCHTROUTER')
                             
                             -- Route to LPCHROUTER
+                            TrackRouting(studyId, 'LPCHROUTER', 'sent')
                             local success1, job1 = pcall(function()
                                 return SendToModality(instance['ID'], 'LPCHROUTER')
                             end)
                             
                             if success1 and job1 then
                                 print('      ✓ Successfully sent to LPCHROUTER (Job: ' .. tostring(job1) .. ')')
+                                TrackRouting(studyId, 'LPCHROUTER', 'success')
                             else
                                 print('      ✗ FAILED to send to LPCHROUTER - Error: ' .. tostring(job1))
+                                TrackRouting(studyId, 'LPCHROUTER', 'failed', tostring(job1))
                             end
                             
                             -- Route to LPCHTROUTER
+                            TrackRouting(studyId, 'LPCHTROUTER', 'sent')
                             local success2, job2 = pcall(function()
                                 return SendToModality(instance['ID'], 'LPCHTROUTER')
                             end)
                             
                             if success2 and job2 then
                                 print('      ✓ Successfully sent to LPCHTROUTER (Job: ' .. tostring(job2) .. ')')
+                                TrackRouting(studyId, 'LPCHTROUTER', 'success')
                             else
                                 print('      ✗ FAILED to send to LPCHTROUTER - Error: ' .. tostring(job2))
+                                TrackRouting(studyId, 'LPCHTROUTER', 'failed', tostring(job2))
                             end
                             
                             -- Mark as processed after routing
@@ -296,14 +326,17 @@ function OnStableStudy(studyId, tags, metadata, origin)
                         elseif modality == 'SR' then
                             print('   ✓ Detected Structured Report - routing to MODLINK')
                             
+                            TrackRouting(studyId, 'MODLINK', 'sent')
                             local success1, job1 = pcall(function()
                                 return SendToModality(instance['ID'], 'MODLINK')
                             end)
                             
                             if success1 and job1 then
                                 print('      ✓ Successfully sent to MODLINK (Job: ' .. tostring(job1) .. ')')
+                                TrackRouting(studyId, 'MODLINK', 'success')
                             else
                                 print('      ✗ FAILED to send to MODLINK - Error: ' .. tostring(job1))
+                                TrackRouting(studyId, 'MODLINK', 'failed', tostring(job1))
                             end
                             
                             -- Mark as processed after routing
@@ -343,6 +376,7 @@ function OnStableStudy(studyId, tags, metadata, origin)
     local bestInstance = findHighestResolutionInstance(instances)
     
     if bestInstance then
+        TrackRouting(studyId, 'MERCURE', 'sent')
         local success, job = pcall(function()
             return SendToModality(bestInstance['ID'], 'MERCURE')
         end)
@@ -351,9 +385,11 @@ function OnStableStudy(studyId, tags, metadata, origin)
             print('   ✓ Highest resolution instance queued for MERCURE (Job: ' .. tostring(job) .. ')')
             print('AUTO-FORWARD: Bone length study (highest res) forwarded to MERCURE - Patient: ' .. 
                       patientName .. ', Study: ' .. studyId .. ', Job: ' .. tostring(job))
+            TrackRouting(studyId, 'MERCURE', 'success')
         else
             print('   ✗ FAILED to queue highest resolution instance to MERCURE - Error: ' .. tostring(job))
             print('AUTO-FORWARD FAILED: Could not send highest resolution instance - Study: ' .. studyId)
+            TrackRouting(studyId, 'MERCURE', 'failed', tostring(job))
         end
     else
         print('   ⚠ No valid instance found with matrix dimensions')
