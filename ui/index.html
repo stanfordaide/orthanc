@@ -846,9 +846,24 @@ function dashboard() {
                 await this.api(`/modalities/${name}/echo`, { method: 'POST' });
                 const ms = Date.now() - start;
                 this.toast(`${name} is reachable (${ms}ms)`, 'success');
-                await this.loadDestinations();
+                
+                // Update just this destination's status (not all)
+                const dest = this.destinations.find(d => d.name === name);
+                if (dest) {
+                    dest.status = ms > 1000 ? 'slow' : 'online';
+                    dest.responseTime = ms;
+                    // Trigger reactivity
+                    this.destinations = [...this.destinations];
+                }
             } catch (e) {
                 this.toast(`${name} is not reachable`, 'error');
+                // Update status to offline
+                const dest = this.destinations.find(d => d.name === name);
+                if (dest) {
+                    dest.status = 'offline';
+                    dest.responseTime = null;
+                    this.destinations = [...this.destinations];
+                }
             }
         },
         
