@@ -739,8 +739,6 @@ function dashboard() {
                 for (const name of names) {
                     try {
                         const config = await this.api(`/modalities/${name}/configuration`);
-                        let status = 'unknown';
-                        let responseTime = null;
                         
                         // Parse config (can be array or object format)
                         const isArray = Array.isArray(config);
@@ -749,16 +747,7 @@ function dashboard() {
                         const port = isArray ? config[2] : config.Port;
                         const manufacturer = isArray ? (config[3] || '') : (config.Manufacturer || '');
                         
-                        // Test connectivity (don't block loading)
-                        try {
-                            const start = Date.now();
-                            await this.api(`/modalities/${name}/echo`, { method: 'POST' });
-                            responseTime = Date.now() - start;
-                            status = responseTime > 1000 ? 'slow' : 'online';
-                        } catch {
-                            status = 'offline';
-                        }
-                        
+                        // Add destination first (before testing connectivity)
                         this.destinations.push({
                             name,
                             aet,
@@ -770,15 +759,42 @@ function dashboard() {
                             allowFind: isArray || config.AllowFind !== false,
                             allowGet: isArray || config.AllowGet !== false,
                             allowMove: isArray || config.AllowMove !== false,
-                            status,
-                            responseTime,
+                            status: 'unknown',
+                            responseTime: null,
                         });
                     } catch (e) {
                         console.error(`Failed to load destination ${name}:`, e);
                     }
                 }
+                
+                // Test connectivity in background (don't block UI)
+                this.testAllDestinations();
+                
             } catch (e) {
                 console.error('Failed to load destinations:', e);
+            }
+        },
+        
+        async testAllDestinations() {
+            for (let i = 0; i < this.destinations.length; i++) {
+                const dest = this.destinations[i];
+                try {
+                    const start = Date.now();
+                    const response = await fetch(this.orthancUrl + `/modalities/${dest.name}/echo`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                    });
+                    if (response.ok) {
+                        const ms = Date.now() - start;
+                        this.destinations[i].responseTime = ms;
+                        this.destinations[i].status = ms > 1000 ? 'slow' : 'online';
+                    } else {
+                        this.destinations[i].status = 'offline';
+                    }
+                } catch {
+                    this.destinations[i].status = 'offline';
+                }
             }
         },
         
