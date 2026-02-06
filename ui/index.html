@@ -201,7 +201,7 @@
                                         Test
                                     </button>
                                     <button @click="openEditDestination(dest)" 
-                                            class="text-xs px-2 py-1 bg-midnight-600 rounded hover:bg-neon-yellow hover:text-midnight-900 transition-all opacity-0 group-hover:opacity-100">
+                                            class="text-xs px-2 py-1 bg-midnight-600 rounded hover:bg-neon-yellow hover:text-midnight-900 transition-all">
                                         Edit
                                     </button>
                                 </div>
@@ -943,18 +943,37 @@ function dashboard() {
         async loadRoutingStats() {
             try {
                 // Get all jobs from Orthanc
-                const jobIds = await this.api('/jobs?expand');
+                const jobs = await this.api('/jobs?expand');
+                const allJobs = Array.isArray(jobs) ? jobs : [];
                 
-                // Filter for DicomModalityStore jobs (send operations)
-                const sendJobs = Array.isArray(jobIds) ? jobIds : [];
+                // Log all job types for debugging
+                const jobTypes = [...new Set(allJobs.map(j => j.Type))];
+                if (jobTypes.length > 0) {
+                    console.log('Job types found:', jobTypes);
+                }
+                
+                // Job types that represent DICOM send operations
+                const sendJobTypes = [
+                    'DicomModalityStore',  // REST API store
+                    'StoreScuJob',         // Lua SendToModality
+                    'DicomStore',          // Alternative name
+                    'C-Store',             // DICOM C-STORE
+                ];
                 
                 // Aggregate by destination
                 const statsByDest = {};
                 
-                for (const job of sendJobs) {
-                    if (job.Type !== 'DicomModalityStore') continue;
+                for (const job of allJobs) {
+                    // Check if it's a send job
+                    if (!sendJobTypes.includes(job.Type)) continue;
                     
-                    const dest = job.Content?.RemoteModality || job.Content?.Modality || 'Unknown';
+                    // Extract destination from various possible fields
+                    const dest = job.Content?.RemoteModality 
+                              || job.Content?.Modality 
+                              || job.Content?.Remote
+                              || job.Content?.Destination
+                              || 'Unknown';
+                              
                     if (!statsByDest[dest]) {
                         statsByDest[dest] = { destination: dest, success: 0, failed: 0, pending: 0 };
                     }
@@ -963,12 +982,17 @@ function dashboard() {
                         statsByDest[dest].success++;
                     } else if (job.State === 'Failure') {
                         statsByDest[dest].failed++;
-                    } else if (job.State === 'Running' || job.State === 'Pending' || job.State === 'Paused') {
+                    } else if (job.State === 'Running' || job.State === 'Pending' || job.State === 'Paused' || job.State === 'Retry') {
                         statsByDest[dest].pending++;
                     }
                 }
                 
                 this.routingStats = Object.values(statsByDest);
+                
+                // Also log if we're not finding send jobs but have other jobs
+                if (this.routingStats.length === 0 && allJobs.length > 0) {
+                    console.log('Found jobs but none are send jobs. Sample job:', allJobs[0]);
+                }
             } catch (e) {
                 console.error('Failed to load routing stats:', e);
                 this.routingStats = [];
