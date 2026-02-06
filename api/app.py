@@ -150,8 +150,26 @@ def get_recent():
     } for e in events])
 
 
+# Initialize database on module load (works with gunicorn)
+def init_on_startup():
+    """Initialize database when app starts"""
+    import time
+    max_retries = 10
+    for attempt in range(max_retries):
+        try:
+            print(f"Initializing routing stats database (attempt {attempt + 1}/{max_retries})...")
+            init_db()
+            print("Database initialized successfully!")
+            return
+        except Exception as e:
+            print(f"Database init failed: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2)
+    print("WARNING: Could not initialize database after retries")
+
+# Run init when module loads
+init_on_startup()
+
 if __name__ == '__main__':
-    print("Initializing routing stats database...")
-    init_db()
     print("Starting routing stats API on port 5000...")
     app.run(host='0.0.0.0', port=5000)
