@@ -170,6 +170,11 @@
                                     class="text-xs px-3 py-1 bg-midnight-700 rounded hover:bg-midnight-600 border border-midnight-600 hover:border-neon-green transition-all">
                                 Test All
                             </button>
+                            <button @click="clearSavedStatuses()" 
+                                    class="text-xs px-3 py-1 bg-midnight-700 rounded hover:bg-midnight-600 border border-midnight-600 hover:border-slate-500 transition-all"
+                                    title="Clear saved test results">
+                                Clear
+                            </button>
                             <button @click="openAddDestination()" 
                                     class="text-xs px-3 py-1 bg-midnight-700 rounded hover:bg-midnight-600 border border-midnight-600 hover:border-neon-blue transition-all">
                                 + Add
@@ -186,8 +191,11 @@
                                         <div class="text-xs text-slate-500" x-text="dest.aet + ' @ ' + dest.host + ':' + dest.port"></div>
                                     </div>
                                 </div>
-                                <div class="flex items-center gap-2">
-                                    <span class="text-xs text-slate-500 font-mono" x-text="dest.responseTime ? dest.responseTime + 'ms' : ''"></span>
+                                <div class="flex items-center gap-3">
+                                    <div class="text-right">
+                                        <span class="text-xs text-slate-500 font-mono block" x-text="dest.responseTime ? dest.responseTime + 'ms' : ''"></span>
+                                        <span class="text-xs text-slate-600" x-text="dest.lastTested ? formatTimeAgo(dest.lastTested) : ''"></span>
+                                    </div>
                                     <button @click="testDestination(dest.name)" 
                                             class="text-xs px-2 py-1 bg-midnight-600 rounded hover:bg-neon-blue hover:text-midnight-900 transition-all">
                                         Test
@@ -297,17 +305,17 @@
             </div>
         </div>
 
-        <!-- Routing Status Section -->
+        <!-- Send Jobs Status Section -->
         <section class="mt-6 bg-midnight-800 rounded-xl border border-midnight-600 overflow-hidden">
             <div class="px-5 py-4 border-b border-midnight-600">
                 <h2 class="font-semibold flex items-center gap-2">
-                    <span class="text-xl">📡</span> Routing Status
+                    <span class="text-xl">📡</span> Send Jobs by Destination
                 </h2>
             </div>
             <div class="p-5">
                 <div x-show="routingStats.length === 0" class="text-center text-slate-500 py-8">
                     <div class="text-4xl mb-2">📊</div>
-                    Routing statistics will appear here once studies are processed
+                    No send jobs found. Stats appear when studies are sent to destinations.
                 </div>
                 <div x-show="routingStats.length > 0" class="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <template x-for="stat in routingStats" :key="stat.destination">
@@ -678,9 +686,62 @@ function dashboard() {
         },
         
         async init() {
+            // Load saved test results from localStorage
+            this.loadSavedStatuses();
             await this.refresh();
             // Auto-refresh every 30 seconds
             setInterval(() => this.refresh(), 30000);
+        },
+        
+        // LocalStorage persistence for test results
+        loadSavedStatuses() {
+            try {
+                const saved = localStorage.getItem('orthanc-destination-statuses');
+                if (saved) {
+                    this._savedStatuses = JSON.parse(saved);
+                } else {
+                    this._savedStatuses = {};
+                }
+            } catch (e) {
+                console.error('Failed to load saved statuses:', e);
+                this._savedStatuses = {};
+            }
+        },
+        
+        saveStatuses() {
+            try {
+                const toSave = {};
+                for (const dest of this.destinations) {
+                    if (dest.status !== 'unknown') {
+                        toSave[dest.name] = {
+                            status: dest.status,
+                            responseTime: dest.responseTime,
+                            lastTested: dest.lastTested
+                        };
+                    }
+                }
+                localStorage.setItem('orthanc-destination-statuses', JSON.stringify(toSave));
+                this._savedStatuses = toSave;
+            } catch (e) {
+                console.error('Failed to save statuses:', e);
+            }
+        },
+        
+        getSavedStatus(name) {
+            return this._savedStatuses?.[name] || null;
+        },
+        
+        clearSavedStatuses() {
+            localStorage.removeItem('orthanc-destination-statuses');
+            this._savedStatuses = {};
+            // Reset all destinations to unknown
+            for (const dest of this.destinations) {
+                dest.status = 'unknown';
+                dest.responseTime = null;
+                dest.lastTested = null;
+            }
+            this.destinations = [...this.destinations];
+            this.toast('Saved test results cleared', 'info');
         },
         
         async refresh() {
@@ -692,6 +753,7 @@ function dashboard() {
                 this.loadDestinations(),
                 this.loadRecentStudies(),
                 this.loadStuck(),
+                this.loadRoutingStats(),
             ]);
             
             this.loading = false;
@@ -741,13 +803,20 @@ function dashboard() {
             try {
                 const names = await this.api('/modalities');
                 
-                // Preserve existing statuses
+                // Preserve existing statuses and timestamps (from memory first, then localStorage)
                 const existingStatuses = {};
                 for (const dest of this.destinations) {
                     existingStatuses[dest.name] = { 
                         status: dest.status, 
-                        responseTime: dest.responseTime 
+                        responseTime: dest.responseTime,
+                        lastTested: dest.lastTested
                     };
+                }
+                // Also check localStorage for any we don't have in memory
+                for (const [name, saved] of Object.entries(this._savedStatuses || {})) {
+                    if (!existingStatuses[name] || existingStatuses[name].status === 'unknown') {
+                        existingStatuses[name] = saved;
+                    }
                 }
                 
                 // Build all destinations first
@@ -779,6 +848,7 @@ function dashboard() {
                             allowMove: isArray || config.AllowMove !== false,
                             status: existing?.status || 'unknown',
                             responseTime: existing?.responseTime || null,
+                            lastTested: existing?.lastTested || null,
                         });
                     } catch (e) {
                         console.error(`Failed to load destination ${name}:`, e);
@@ -794,8 +864,9 @@ function dashboard() {
         },
         
         async testAllDestinations() {
-            this.toast('Testing all destinations...', 'info');
+            const toastId = this.toast('Testing all destinations...', 'info', true);
             let online = 0, offline = 0;
+            const now = Date.now();
             
             for (const dest of this.destinations) {
                 try {
@@ -809,19 +880,27 @@ function dashboard() {
                         const ms = Date.now() - start;
                         dest.responseTime = ms;
                         dest.status = ms > 1000 ? 'slow' : 'online';
+                        dest.lastTested = now;
                         online++;
                     } else {
                         dest.status = 'offline';
+                        dest.lastTested = now;
                         offline++;
                     }
                 } catch {
                     dest.status = 'offline';
+                    dest.lastTested = now;
                     offline++;
                 }
                 // Force reactivity update after each test
                 this.destinations = [...this.destinations];
             }
             
+            // Save to localStorage
+            this.saveStatuses();
+            
+            // Dismiss "testing" toast and show result
+            this.dismissToast(toastId);
             this.toast(`Testing complete: ${online} online, ${offline} offline`, online > 0 ? 'success' : 'error');
         },
         
@@ -861,12 +940,50 @@ function dashboard() {
             this.stuck = [];
         },
         
+        async loadRoutingStats() {
+            try {
+                // Get all jobs from Orthanc
+                const jobIds = await this.api('/jobs?expand');
+                
+                // Filter for DicomModalityStore jobs (send operations)
+                const sendJobs = Array.isArray(jobIds) ? jobIds : [];
+                
+                // Aggregate by destination
+                const statsByDest = {};
+                
+                for (const job of sendJobs) {
+                    if (job.Type !== 'DicomModalityStore') continue;
+                    
+                    const dest = job.Content?.RemoteModality || job.Content?.Modality || 'Unknown';
+                    if (!statsByDest[dest]) {
+                        statsByDest[dest] = { destination: dest, success: 0, failed: 0, pending: 0 };
+                    }
+                    
+                    if (job.State === 'Success') {
+                        statsByDest[dest].success++;
+                    } else if (job.State === 'Failure') {
+                        statsByDest[dest].failed++;
+                    } else if (job.State === 'Running' || job.State === 'Pending' || job.State === 'Paused') {
+                        statsByDest[dest].pending++;
+                    }
+                }
+                
+                this.routingStats = Object.values(statsByDest);
+            } catch (e) {
+                console.error('Failed to load routing stats:', e);
+                this.routingStats = [];
+            }
+        },
+        
         async testDestination(name) {
-            this.toast(`Testing ${name}...`, 'info');
+            const toastId = this.toast(`Testing ${name}...`, 'info', true);
             try {
                 const start = Date.now();
                 await this.api(`/modalities/${name}/echo`, { method: 'POST' });
                 const ms = Date.now() - start;
+                
+                // Dismiss "testing" toast and show result
+                this.dismissToast(toastId);
                 this.toast(`${name} is reachable (${ms}ms)`, 'success');
                 
                 // Update just this destination's status (not all)
@@ -874,17 +991,24 @@ function dashboard() {
                 if (dest) {
                     dest.status = ms > 1000 ? 'slow' : 'online';
                     dest.responseTime = ms;
-                    // Trigger reactivity
+                    dest.lastTested = Date.now();
+                    // Trigger reactivity and save
                     this.destinations = [...this.destinations];
+                    this.saveStatuses();
                 }
             } catch (e) {
+                // Dismiss "testing" toast and show error
+                this.dismissToast(toastId);
                 this.toast(`${name} is not reachable`, 'error');
+                
                 // Update status to offline
                 const dest = this.destinations.find(d => d.name === name);
                 if (dest) {
                     dest.status = 'offline';
                     dest.responseTime = null;
+                    dest.lastTested = Date.now();
                     this.destinations = [...this.destinations];
+                    this.saveStatuses();
                 }
             }
         },
@@ -932,16 +1056,38 @@ function dashboard() {
             return mb.toFixed(0) + ' MB';
         },
         
-        toast(message, type = 'info') {
+        toast(message, type = 'info', persistent = false) {
             const id = Date.now();
             this.toasts.push({ id, message, type, visible: true });
-            setTimeout(() => {
-                const t = this.toasts.find(x => x.id === id);
-                if (t) t.visible = false;
-            }, 3000);
+            if (!persistent) {
+                setTimeout(() => {
+                    const t = this.toasts.find(x => x.id === id);
+                    if (t) t.visible = false;
+                }, 3000);
+                setTimeout(() => {
+                    this.toasts = this.toasts.filter(x => x.id !== id);
+                }, 3500);
+            }
+            return id;
+        },
+        
+        dismissToast(id) {
+            const t = this.toasts.find(x => x.id === id);
+            if (t) t.visible = false;
             setTimeout(() => {
                 this.toasts = this.toasts.filter(x => x.id !== id);
-            }, 3500);
+            }, 300);
+        },
+        
+        formatTimeAgo(timestamp) {
+            if (!timestamp) return '';
+            const seconds = Math.floor((Date.now() - timestamp) / 1000);
+            if (seconds < 60) return 'just now';
+            const minutes = Math.floor(seconds / 60);
+            if (minutes < 60) return `${minutes}m ago`;
+            const hours = Math.floor(minutes / 60);
+            if (hours < 24) return `${hours}h ago`;
+            return new Date(timestamp).toLocaleDateString();
         },
         
         async searchStudies() {
