@@ -305,17 +305,57 @@
             </div>
         </div>
 
-        <!-- Send Jobs Status Section -->
+        <!-- Workflow Stats Section -->
         <section class="mt-6 bg-midnight-800 rounded-xl border border-midnight-600 overflow-hidden">
             <div class="px-5 py-4 border-b border-midnight-600">
                 <h2 class="font-semibold flex items-center gap-2">
-                    <span class="text-xl">📡</span> Send Jobs by Destination
+                    <span class="text-xl">📊</span> Routing Workflows (Last 24h)
                 </h2>
             </div>
             <div class="p-5">
-                <div x-show="routingStats.length === 0" class="text-center text-slate-500 py-8">
+                <!-- Aggregate Overview -->
+                <div x-show="workflowStats" class="mb-6">
+                    <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
+                        <div class="bg-midnight-700 rounded-lg p-4 text-center">
+                            <div class="text-3xl font-bold text-white" x-text="workflowStats?.overall?.total || 0"></div>
+                            <div class="text-xs text-slate-500 mt-1">Total Studies</div>
+                        </div>
+                        <div class="bg-midnight-700 rounded-lg p-4 text-center">
+                            <div class="text-3xl font-bold text-neon-green" x-text="workflowStats?.overall?.complete || 0"></div>
+                            <div class="text-xs text-slate-500 mt-1">Complete</div>
+                        </div>
+                        <div class="bg-midnight-700 rounded-lg p-4 text-center">
+                            <div class="text-3xl font-bold text-neon-yellow" x-text="workflowStats?.overall?.in_progress || 0"></div>
+                            <div class="text-xs text-slate-500 mt-1">In Progress</div>
+                        </div>
+                        <div class="bg-midnight-700 rounded-lg p-4 text-center">
+                            <div class="text-3xl font-bold text-neon-red" x-text="workflowStats?.overall?.failed || 0"></div>
+                            <div class="text-xs text-slate-500 mt-1">Failed</div>
+                        </div>
+                        <div class="bg-midnight-700 rounded-lg p-4 text-center">
+                            <div class="text-3xl font-bold" 
+                                 :class="(workflowStats?.overall?.stuck || 0) > 0 ? 'text-orange-500' : 'text-slate-600'"
+                                 x-text="workflowStats?.overall?.stuck || 0"></div>
+                            <div class="text-xs text-slate-500 mt-1">Stuck</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Success Rate Banner -->
+                    <div x-show="workflowStats?.overall?.success_rate !== null" 
+                         class="bg-midnight-700 rounded-lg p-4 flex items-center justify-between">
+                        <div class="text-sm text-slate-400">Overall Success Rate</div>
+                        <div class="text-2xl font-bold"
+                             :class="workflowStats?.overall?.success_rate >= 90 ? 'text-neon-green' : 
+                                     workflowStats?.overall?.success_rate >= 50 ? 'text-neon-yellow' : 'text-neon-red'"
+                             x-text="workflowStats?.overall?.success_rate + '%'"></div>
+                    </div>
+                </div>
+                
+                <!-- Per-Destination Breakdown -->
+                <h3 class="text-sm font-medium text-slate-400 mb-3">By Destination</h3>
+                <div x-show="routingStats.length === 0 && !workflowStats" class="text-center text-slate-500 py-8">
                     <div class="text-4xl mb-2">📊</div>
-                    No send jobs found. Stats appear when studies are sent to destinations.
+                    No routing data yet. Stats appear when studies are processed.
                 </div>
                 <div x-show="routingStats.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     <template x-for="stat in routingStats" :key="stat.destination">
@@ -325,7 +365,7 @@
                                 <div class="text-xs px-2 py-0.5 rounded-full"
                                      :class="stat.success_rate >= 90 ? 'bg-neon-green/20 text-neon-green' : 
                                              stat.success_rate >= 50 ? 'bg-neon-yellow/20 text-neon-yellow' : 
-                                             'bg-neon-red/20 text-neon-red'"
+                                             stat.success_rate !== null ? 'bg-neon-red/20 text-neon-red' : 'bg-slate-700 text-slate-500'"
                                      x-text="stat.success_rate !== null ? stat.success_rate + '%' : '—'"></div>
                             </div>
                             <div class="grid grid-cols-3 gap-2 text-center text-xs">
@@ -342,10 +382,35 @@
                                     <div class="text-slate-500">pending</div>
                                 </div>
                             </div>
-                            <div class="mt-2 text-xs text-slate-600 text-right" 
-                                 x-text="stat.last_activity ? 'Last: ' + new Date(stat.last_activity).toLocaleString() : ''"></div>
                         </div>
                     </template>
+                </div>
+                
+                <!-- Stuck Workflows Alert -->
+                <div x-show="stuckWorkflows.length > 0" class="mt-4 bg-orange-500/10 border border-orange-500/30 rounded-lg p-4">
+                    <div class="flex items-center gap-2 text-orange-500 font-medium mb-2">
+                        <span>⚠️</span> Stuck Workflows
+                    </div>
+                    <div class="space-y-2">
+                        <template x-for="w in stuckWorkflows.slice(0, 5)" :key="w.study_id">
+                            <div class="text-sm flex justify-between items-center bg-midnight-700 rounded p-2">
+                                <div>
+                                    <span class="font-mono text-xs" x-text="w.study_id.substring(0, 8) + '...'"></span>
+                                    <span class="text-slate-500 ml-2" x-text="w.patient_name"></span>
+                                </div>
+                                <div class="text-xs text-orange-400" x-text="Math.round(w.minutes_since_update) + 'm ago'"></div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+                
+                <!-- Timing Stats -->
+                <div x-show="workflowStats?.timing?.avg_mercure_response_minutes" class="mt-4 text-xs text-slate-500">
+                    <span>Avg MERCURE response: </span>
+                    <span class="text-slate-400" x-text="workflowStats?.timing?.avg_mercure_response_minutes + ' min'"></span>
+                    <span class="mx-2">|</span>
+                    <span>Avg total workflow: </span>
+                    <span class="text-slate-400" x-text="workflowStats?.timing?.avg_total_workflow_minutes + ' min'"></span>
                 </div>
             </div>
         </section>
@@ -678,6 +743,8 @@ function dashboard() {
         recentStudies: [],
         stuck: [],
         routingStats: [],
+        workflowStats: null,
+        stuckWorkflows: [],
         searchQuery: '',
         selectedStudy: null,
         showStuckModal: false,
@@ -960,10 +1027,23 @@ function dashboard() {
         
         async loadRoutingStats() {
             try {
-                // Fetch from routing stats API (persisted in PostgreSQL)
-                const response = await fetch('/api/routing/stats');
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                this.routingStats = await response.json();
+                // Fetch destination stats (per-destination breakdown)
+                const destResponse = await fetch('/api/workflow/stats/destinations');
+                if (destResponse.ok) {
+                    this.routingStats = await destResponse.json();
+                }
+                
+                // Fetch aggregate workflow stats
+                const statsResponse = await fetch('/api/workflow/stats?hours=24');
+                if (statsResponse.ok) {
+                    this.workflowStats = await statsResponse.json();
+                }
+                
+                // Fetch stuck workflows
+                const stuckResponse = await fetch('/api/workflow/stuck');
+                if (stuckResponse.ok) {
+                    this.stuckWorkflows = await stuckResponse.json();
+                }
             } catch (e) {
                 console.error('Failed to load routing stats:', e);
                 this.routingStats = [];

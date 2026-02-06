@@ -1,21 +1,69 @@
 -- ═══════════════════════════════════════════════════════════════════════════════
--- ROUTING TRACKER - Send events to PostgreSQL via routing-api
+-- WORKFLOW TRACKER - Track study journey through routing stages
 -- ═══════════════════════════════════════════════════════════════════════════════
 ROUTING_API_URL = "http://routing-api:5000"
 
-function TrackRouting(studyId, destination, status, errorMessage)
+-- Start tracking a new workflow
+function StartWorkflow(studyId, patientName, studyDescription, studyInstanceUid)
     local payload = {
         study_id = studyId,
-        destination = destination,
+        patient_name = patientName,
+        study_description = studyDescription,
+        study_instance_uid = studyInstanceUid
+    }
+    
+    pcall(function()
+        HttpPost(ROUTING_API_URL .. "/workflow/start", DumpJson(payload), {
+            ["Content-Type"] = "application/json"
+        })
+    end)
+    print("[WORKFLOW] Started tracking: " .. studyId)
+end
+
+-- Update a workflow stage
+-- stage: mercure_sent, mercure_returned, lpch, lpcht, modlink
+-- status: pending, sending, success, failed
+function UpdateWorkflow(studyId, stage, status, errorMessage)
+    local payload = {
+        study_id = studyId,
+        stage = stage,
         status = status,
         error = errorMessage
     }
     
     pcall(function()
-        HttpPost(ROUTING_API_URL .. "/routing/event", DumpJson(payload), {
+        HttpPost(ROUTING_API_URL .. "/workflow/update", DumpJson(payload), {
             ["Content-Type"] = "application/json"
         })
     end)
+    print("[WORKFLOW] " .. studyId .. " -> " .. stage .. " = " .. status)
+end
+
+-- Mark that MERCURE has returned results
+function MarkMercureReturned(studyId)
+    local payload = { study_id = studyId }
+    
+    pcall(function()
+        HttpPost(ROUTING_API_URL .. "/workflow/mercure-returned", DumpJson(payload), {
+            ["Content-Type"] = "application/json"
+        })
+    end)
+    print("[WORKFLOW] " .. studyId .. " -> MERCURE results received")
+end
+
+-- Legacy compatibility function
+function TrackRouting(studyId, destination, status, errorMessage)
+    -- Map destination to workflow stage
+    local stageMap = {
+        MERCURE = "mercure_sent",
+        LPCHROUTER = "lpch",
+        LPCHTROUTER = "lpcht",
+        MODLINK = "modlink"
+    }
+    local stage = stageMap[destination]
+    if stage then
+        UpdateWorkflow(studyId, stage, status, errorMessage)
+    end
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -255,6 +303,8 @@ function OnStableStudy(studyId, tags, metadata, origin)
     
     if hasAIDEOutput then
         print('   ✓ Study contains Stanford AIDE output - routing to final destinations')
+        -- Mark that MERCURE has returned results
+        MarkMercureReturned(studyId)
         
         -- Route Stanford AIDE outputs to their destinations
         for _, instance in pairs(instances) do
@@ -372,6 +422,9 @@ function OnStableStudy(studyId, tags, metadata, origin)
     print('   Study UID: ' .. studyInstanceUID)
     print('   Original Description: ' .. studyDescription)
     print('   Found ' .. getTableLength(instances) .. ' instances in study')
+    
+    -- Start workflow tracking
+    StartWorkflow(studyId, patientName, studyDescription, studyInstanceUID)
     
     local bestInstance = findHighestResolutionInstance(instances)
     
