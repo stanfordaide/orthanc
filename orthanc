@@ -14,13 +14,15 @@ cd "$SCRIPT_DIR"
 
 # Load environment
 if [[ -f .env ]]; then
-    export $(grep -v '^#' .env | xargs)
+    set -a  # auto-export
+    source .env
+    set +a
 fi
 
 # Configuration
 ORTHANC_URL="http://localhost:${ORTHANC_WEB_PORT:-8041}"
 ORTHANC_USER="${ORTHANC_USERNAME:-orthanc_admin}"
-ORTHANC_PASS="${ORTHANC_PASSWORD:-orthanc}"
+ORTHANC_PASS="${ORTHANC_PASSWORD:-helloaide123}"
 
 # Colors
 RED='\033[0;31m'
@@ -77,7 +79,8 @@ cmd_status() {
     echo "  Dashboard: http://localhost:${OPERATOR_UI_PORT:-8040}"
     echo "  Orthanc:   http://localhost:${ORTHANC_WEB_PORT:-8041}"
     echo "  OHIF:      http://localhost:${OHIF_PORT:-8042}"
-    echo "  DICOM:     ${ORTHANC_AET:-ORTHANC} @ port ${DICOM_PORT:-4242}"
+    echo "  PostgreSQL: localhost:${POSTGRES_PORT:-8043}"
+    echo "  DICOM:     ${ORTHANC_AET:-ORTHANC_LPCH} @ port ${DICOM_PORT:-4242}"
 }
 
 cmd_start() {

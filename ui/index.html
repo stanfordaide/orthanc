@@ -165,32 +165,41 @@
                         <h2 class="font-semibold flex items-center gap-2">
                             <span class="text-xl">🌐</span> DICOM Destinations
                         </h2>
-                        <button @click="showAddDestination = true" 
+                        <button @click="openAddDestination()" 
                                 class="text-xs px-3 py-1 bg-midnight-700 rounded hover:bg-midnight-600 border border-midnight-600 hover:border-neon-blue transition-all">
                             + Add
                         </button>
                     </div>
                     <div class="divide-y divide-midnight-700">
                         <template x-for="dest in destinations" :key="dest.name">
-                            <div class="px-5 py-3 flex items-center justify-between hover:bg-midnight-700/50 transition-colors">
+                            <div class="px-5 py-3 flex items-center justify-between hover:bg-midnight-700/50 transition-colors group">
                                 <div class="flex items-center gap-3">
                                     <span class="text-xl" x-text="dest.status === 'online' ? '✅' : dest.status === 'slow' ? '⚠️' : '❌'"></span>
                                     <div>
                                         <div class="font-medium font-mono text-sm" x-text="dest.name"></div>
-                                        <div class="text-xs text-slate-500" x-text="dest.aet + ' @ ' + dest.host"></div>
+                                        <div class="text-xs text-slate-500" x-text="dest.aet + ' @ ' + dest.host + ':' + dest.port"></div>
                                     </div>
                                 </div>
-                                <div class="flex items-center gap-3">
+                                <div class="flex items-center gap-2">
                                     <span class="text-xs text-slate-500 font-mono" x-text="dest.responseTime ? dest.responseTime + 'ms' : ''"></span>
                                     <button @click="testDestination(dest.name)" 
                                             class="text-xs px-2 py-1 bg-midnight-600 rounded hover:bg-neon-blue hover:text-midnight-900 transition-all">
                                         Test
                                     </button>
+                                    <button @click="openEditDestination(dest)" 
+                                            class="text-xs px-2 py-1 bg-midnight-600 rounded hover:bg-neon-yellow hover:text-midnight-900 transition-all opacity-0 group-hover:opacity-100">
+                                        Edit
+                                    </button>
                                 </div>
                             </div>
                         </template>
                         <div x-show="destinations.length === 0" class="px-5 py-8 text-center text-slate-500">
-                            No destinations configured
+                            <div class="text-3xl mb-2">📡</div>
+                            <div>No destinations configured</div>
+                            <button @click="openAddDestination()" 
+                                    class="mt-3 text-sm px-4 py-2 bg-midnight-700 rounded-lg hover:bg-midnight-600 border border-midnight-600 hover:border-neon-blue transition-all">
+                                Add your first destination
+                            </button>
                         </div>
                     </div>
                 </section>
@@ -201,12 +210,12 @@
                         <span class="text-xl">🔗</span> Quick Links
                     </h2>
                     <div class="grid grid-cols-2 gap-3">
-                        <a :href="'http://' + window.location.hostname + ':8041'" target="_blank"
+                        <a :href="orthancWebUrl" target="_blank"
                            class="px-4 py-3 bg-midnight-700 rounded-lg hover:bg-midnight-600 border border-midnight-600 hover:border-neon-blue transition-all text-center">
                             <div class="text-2xl mb-1">🏥</div>
                             <div class="text-xs">Orthanc</div>
                         </a>
-                        <a :href="'http://' + window.location.hostname + ':8042'" target="_blank"
+                        <a :href="ohifUrl" target="_blank"
                            class="px-4 py-3 bg-midnight-700 rounded-lg hover:bg-midnight-600 border border-midnight-600 hover:border-neon-purple transition-all text-center">
                             <div class="text-2xl mb-1">🖼️</div>
                             <div class="text-xs">OHIF Viewer</div>
@@ -257,7 +266,7 @@
                                                         class="text-xs px-2 py-1 bg-midnight-600 rounded hover:bg-neon-blue hover:text-midnight-900 transition-all">
                                                     View
                                                 </button>
-                                                <a :href="'http://' + window.location.hostname + ':8042/viewer/' + study.studyUid" 
+                                                <a :href="ohifUrl + '/viewer/' + study.studyUid" 
                                                    target="_blank"
                                                    class="text-xs px-2 py-1 bg-midnight-600 rounded hover:bg-neon-purple hover:text-white transition-all">
                                                     OHIF
@@ -347,12 +356,12 @@
                     </div>
                     
                     <div class="flex gap-3">
-                        <a :href="'http://' + window.location.hostname + ':8041/app/explorer.html#study?uuid=' + selectedStudy.id"
+                        <a :href="orthancWebUrl + '/app/explorer.html#study?uuid=' + selectedStudy.id"
                            target="_blank"
                            class="flex-1 px-4 py-3 bg-midnight-700 rounded-lg hover:bg-neon-blue hover:text-midnight-900 transition-all text-center">
                             Open in Orthanc
                         </a>
-                        <a :href="'http://' + window.location.hostname + ':8042/viewer/' + selectedStudy.studyUid"
+                        <a :href="ohifUrl + '/viewer/' + selectedStudy.studyUid"
                            target="_blank"
                            class="flex-1 px-4 py-3 bg-midnight-700 rounded-lg hover:bg-neon-purple hover:text-white transition-all text-center">
                             Open in OHIF
@@ -432,6 +441,182 @@
         </template>
     </div>
 
+    <!-- Add/Edit Destination Modal -->
+    <div x-show="showDestinationModal" x-cloak
+         class="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50"
+         @click.self="closeDestinationModal()"
+         x-transition>
+        <div class="bg-midnight-800 rounded-xl border border-midnight-600 p-6 max-w-md w-full">
+            <div class="flex justify-between items-start mb-6">
+                <h3 class="text-xl font-semibold" x-text="editingDestination ? 'Edit Destination' : 'Add DICOM Destination'"></h3>
+                <button @click="closeDestinationModal()" class="text-slate-400 hover:text-white text-2xl">&times;</button>
+            </div>
+            
+            <form @submit.prevent="saveDestination()" class="space-y-4">
+                <!-- Name -->
+                <div>
+                    <label class="block text-sm text-slate-400 mb-1">Name <span class="text-neon-red">*</span></label>
+                    <input type="text" 
+                           x-model="destinationForm.name"
+                           :disabled="editingDestination"
+                           :class="editingDestination && 'opacity-50 cursor-not-allowed'"
+                           class="w-full bg-midnight-700 border border-midnight-600 rounded-lg px-4 py-2 focus:border-neon-blue focus:outline-none font-mono"
+                           placeholder="MERCURE"
+                           required>
+                    <p class="text-xs text-slate-500 mt-1">Unique identifier (no spaces)</p>
+                </div>
+                
+                <!-- AE Title -->
+                <div>
+                    <label class="block text-sm text-slate-400 mb-1">AE Title <span class="text-neon-red">*</span></label>
+                    <input type="text" 
+                           x-model="destinationForm.aet"
+                           class="w-full bg-midnight-700 border border-midnight-600 rounded-lg px-4 py-2 focus:border-neon-blue focus:outline-none font-mono uppercase"
+                           placeholder="MERCURE_AET"
+                           maxlength="16"
+                           required>
+                    <p class="text-xs text-slate-500 mt-1">Max 16 characters, uppercase recommended</p>
+                </div>
+                
+                <!-- Host -->
+                <div>
+                    <label class="block text-sm text-slate-400 mb-1">Host <span class="text-neon-red">*</span></label>
+                    <input type="text" 
+                           x-model="destinationForm.host"
+                           class="w-full bg-midnight-700 border border-midnight-600 rounded-lg px-4 py-2 focus:border-neon-blue focus:outline-none font-mono"
+                           placeholder="192.168.1.100 or hostname.local"
+                           required>
+                </div>
+                
+                <!-- Port -->
+                <div>
+                    <label class="block text-sm text-slate-400 mb-1">Port <span class="text-neon-red">*</span></label>
+                    <input type="number" 
+                           x-model.number="destinationForm.port"
+                           class="w-full bg-midnight-700 border border-midnight-600 rounded-lg px-4 py-2 focus:border-neon-blue focus:outline-none font-mono"
+                           placeholder="4242"
+                           min="1"
+                           max="65535"
+                           required>
+                </div>
+                
+                <!-- Advanced Options Toggle -->
+                <div>
+                    <button type="button" 
+                            @click="showAdvancedOptions = !showAdvancedOptions"
+                            class="text-sm text-slate-400 hover:text-white flex items-center gap-1">
+                        <svg class="w-4 h-4 transition-transform" :class="showAdvancedOptions && 'rotate-90'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                        </svg>
+                        Advanced Options
+                    </button>
+                </div>
+                
+                <!-- Advanced Options -->
+                <div x-show="showAdvancedOptions" x-transition class="space-y-4 pt-2 border-t border-midnight-700">
+                    <!-- Manufacturer -->
+                    <div>
+                        <label class="block text-sm text-slate-400 mb-1">Manufacturer</label>
+                        <select x-model="destinationForm.manufacturer"
+                                class="w-full bg-midnight-700 border border-midnight-600 rounded-lg px-4 py-2 focus:border-neon-blue focus:outline-none">
+                            <option value="">Generic</option>
+                            <option value="Generic">Generic</option>
+                            <option value="GenericNoWildcardInDates">Generic (No Wildcard Dates)</option>
+                            <option value="StoreScp">StoreSCP</option>
+                            <option value="ClearCanvas">ClearCanvas</option>
+                            <option value="Dcm4Chee">Dcm4Chee</option>
+                            <option value="SyngoVia">Syngo.via</option>
+                            <option value="AgfaImpax">Agfa IMPAX</option>
+                            <option value="EFilm">eFilm</option>
+                            <option value="Vitrea">Vitrea</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Allow Echo/Store/Find/Get/Move checkboxes -->
+                    <div>
+                        <label class="block text-sm text-slate-400 mb-2">Allowed Operations</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <label class="flex items-center gap-2 text-sm">
+                                <input type="checkbox" x-model="destinationForm.allowEcho" class="rounded bg-midnight-600 border-midnight-500">
+                                <span>C-ECHO</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-sm">
+                                <input type="checkbox" x-model="destinationForm.allowStore" class="rounded bg-midnight-600 border-midnight-500">
+                                <span>C-STORE</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-sm">
+                                <input type="checkbox" x-model="destinationForm.allowFind" class="rounded bg-midnight-600 border-midnight-500">
+                                <span>C-FIND</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-sm">
+                                <input type="checkbox" x-model="destinationForm.allowGet" class="rounded bg-midnight-600 border-midnight-500">
+                                <span>C-GET</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-sm">
+                                <input type="checkbox" x-model="destinationForm.allowMove" class="rounded bg-midnight-600 border-midnight-500">
+                                <span>C-MOVE</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Error Message -->
+                <div x-show="destinationError" class="text-neon-red text-sm bg-neon-red/10 border border-neon-red/30 rounded-lg px-4 py-2">
+                    <span x-text="destinationError"></span>
+                </div>
+                
+                <!-- Actions -->
+                <div class="flex gap-3 pt-4">
+                    <button type="button" 
+                            @click="closeDestinationModal()"
+                            class="flex-1 px-4 py-2 bg-midnight-700 rounded-lg hover:bg-midnight-600 transition-colors">
+                        Cancel
+                    </button>
+                    <button type="button"
+                            x-show="editingDestination"
+                            @click="confirmDeleteDestination()"
+                            class="px-4 py-2 bg-neon-red/20 text-neon-red border border-neon-red/30 rounded-lg hover:bg-neon-red/30 transition-colors">
+                        Delete
+                    </button>
+                    <button type="submit"
+                            :disabled="savingDestination"
+                            class="flex-1 px-4 py-2 bg-neon-blue text-midnight-900 rounded-lg hover:bg-neon-blue/80 transition-colors font-medium disabled:opacity-50">
+                        <span x-show="!savingDestination" x-text="editingDestination ? 'Update' : 'Add'"></span>
+                        <span x-show="savingDestination">Saving...</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div x-show="showDeleteConfirm" x-cloak
+         class="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-[60]"
+         @click.self="showDeleteConfirm = false"
+         x-transition>
+        <div class="bg-midnight-800 rounded-xl border-2 border-neon-red p-6 max-w-sm w-full">
+            <div class="text-center">
+                <div class="text-5xl mb-4">⚠️</div>
+                <h3 class="text-xl font-semibold mb-2">Delete Destination?</h3>
+                <p class="text-slate-400 mb-6">
+                    Are you sure you want to delete <span class="font-mono text-neon-red" x-text="destinationForm.name"></span>?
+                    <br><br>
+                    This will remove the modality from Orthanc. Any routing rules using this destination will fail.
+                </p>
+                <div class="flex gap-3">
+                    <button @click="showDeleteConfirm = false"
+                            class="flex-1 px-4 py-2 bg-midnight-700 rounded-lg hover:bg-midnight-600">
+                        Cancel
+                    </button>
+                    <button @click="deleteDestination()"
+                            class="flex-1 px-4 py-2 bg-neon-red text-white rounded-lg hover:bg-neon-red/80 font-medium">
+                        Delete
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Footer -->
     <footer class="mt-12 py-6 border-t border-midnight-700">
         <div class="container mx-auto px-6 text-center text-slate-600 text-sm">
@@ -447,7 +632,10 @@
 function dashboard() {
     return {
         // Config - adjust based on your setup
+        // These can be overridden via window.ORTHANC_CONFIG
         orthancUrl: '/orthanc',  // Proxied through nginx
+        orthancWebUrl: 'http://' + window.location.hostname + ':8041',
+        ohifUrl: 'http://' + window.location.hostname + ':8042',
         
         // State
         loading: false,
@@ -460,9 +648,28 @@ function dashboard() {
         routingStats: [],
         searchQuery: '',
         selectedStudy: null,
-        showAddDestination: false,
         showStuckModal: false,
         toasts: [],
+        
+        // Destination management
+        showDestinationModal: false,
+        showDeleteConfirm: false,
+        showAdvancedOptions: false,
+        editingDestination: null,
+        savingDestination: false,
+        destinationError: '',
+        destinationForm: {
+            name: '',
+            aet: '',
+            host: '',
+            port: 4242,
+            manufacturer: '',
+            allowEcho: true,
+            allowStore: true,
+            allowFind: true,
+            allowGet: true,
+            allowMove: true,
+        },
         
         async init() {
             await this.refresh();
@@ -535,7 +742,14 @@ function dashboard() {
                         let status = 'unknown';
                         let responseTime = null;
                         
-                        // Test connectivity
+                        // Parse config (can be array or object format)
+                        const isArray = Array.isArray(config);
+                        const aet = isArray ? config[0] : config.AET;
+                        const host = isArray ? config[1] : config.Host;
+                        const port = isArray ? config[2] : config.Port;
+                        const manufacturer = isArray ? (config[3] || '') : (config.Manufacturer || '');
+                        
+                        // Test connectivity (don't block loading)
                         try {
                             const start = Date.now();
                             await this.api(`/modalities/${name}/echo`, { method: 'POST' });
@@ -547,9 +761,15 @@ function dashboard() {
                         
                         this.destinations.push({
                             name,
-                            aet: Array.isArray(config) ? config[0] : config.AET,
-                            host: Array.isArray(config) ? config[1] : config.Host,
-                            port: Array.isArray(config) ? config[2] : config.Port,
+                            aet,
+                            host,
+                            port,
+                            manufacturer,
+                            allowEcho: isArray || config.AllowEcho !== false,
+                            allowStore: isArray || config.AllowStore !== false,
+                            allowFind: isArray || config.AllowFind !== false,
+                            allowGet: isArray || config.AllowGet !== false,
+                            allowMove: isArray || config.AllowMove !== false,
                             status,
                             responseTime,
                         });
@@ -669,6 +889,158 @@ function dashboard() {
                 return;
             }
             // TODO: Use Orthanc's /tools/find endpoint
+        },
+        
+        // ─────────────────────────────────────────────────────────────────
+        // DESTINATION MANAGEMENT
+        // ─────────────────────────────────────────────────────────────────
+        
+        resetDestinationForm() {
+            this.destinationForm = {
+                name: '',
+                aet: '',
+                host: '',
+                port: 4242,
+                manufacturer: '',
+                allowEcho: true,
+                allowStore: true,
+                allowFind: true,
+                allowGet: true,
+                allowMove: true,
+            };
+            this.destinationError = '';
+            this.showAdvancedOptions = false;
+        },
+        
+        openAddDestination() {
+            this.editingDestination = null;
+            this.resetDestinationForm();
+            this.showDestinationModal = true;
+        },
+        
+        openEditDestination(dest) {
+            this.editingDestination = dest.name;
+            this.destinationForm = {
+                name: dest.name,
+                aet: dest.aet || '',
+                host: dest.host || '',
+                port: dest.port || 4242,
+                manufacturer: dest.manufacturer || '',
+                allowEcho: dest.allowEcho !== false,
+                allowStore: dest.allowStore !== false,
+                allowFind: dest.allowFind !== false,
+                allowGet: dest.allowGet !== false,
+                allowMove: dest.allowMove !== false,
+            };
+            this.destinationError = '';
+            this.showDestinationModal = true;
+        },
+        
+        closeDestinationModal() {
+            this.showDestinationModal = false;
+            this.editingDestination = null;
+            this.resetDestinationForm();
+        },
+        
+        async saveDestination() {
+            this.destinationError = '';
+            this.savingDestination = true;
+            
+            // Validate
+            const { name, aet, host, port } = this.destinationForm;
+            if (!name || !aet || !host || !port) {
+                this.destinationError = 'All required fields must be filled';
+                this.savingDestination = false;
+                return;
+            }
+            
+            // Validate name (no spaces, alphanumeric + underscore)
+            if (!/^[a-zA-Z0-9_]+$/.test(name)) {
+                this.destinationError = 'Name must contain only letters, numbers, and underscores';
+                this.savingDestination = false;
+                return;
+            }
+            
+            // Validate AET (max 16 chars)
+            if (aet.length > 16) {
+                this.destinationError = 'AE Title must be 16 characters or less';
+                this.savingDestination = false;
+                return;
+            }
+            
+            // Validate port
+            if (port < 1 || port > 65535) {
+                this.destinationError = 'Port must be between 1 and 65535';
+                this.savingDestination = false;
+                return;
+            }
+            
+            try {
+                // Build the modality configuration
+                // Orthanc accepts modalities in a few formats, we'll use the object format
+                const config = {
+                    AET: aet.toUpperCase(),
+                    Host: host,
+                    Port: parseInt(port, 10),
+                    AllowEcho: this.destinationForm.allowEcho,
+                    AllowStore: this.destinationForm.allowStore,
+                    AllowFind: this.destinationForm.allowFind,
+                    AllowGet: this.destinationForm.allowGet,
+                    AllowMove: this.destinationForm.allowMove,
+                };
+                
+                if (this.destinationForm.manufacturer) {
+                    config.Manufacturer = this.destinationForm.manufacturer;
+                }
+                
+                // PUT to create or update the modality
+                await fetch(this.orthancUrl + '/modalities/' + name, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify(config),
+                });
+                
+                this.toast(
+                    this.editingDestination 
+                        ? `Updated ${name}` 
+                        : `Added ${name}`,
+                    'success'
+                );
+                
+                this.closeDestinationModal();
+                await this.loadDestinations();
+                
+            } catch (e) {
+                console.error('Failed to save destination:', e);
+                this.destinationError = 'Failed to save: ' + (e.message || 'Unknown error');
+            } finally {
+                this.savingDestination = false;
+            }
+        },
+        
+        confirmDeleteDestination() {
+            this.showDeleteConfirm = true;
+        },
+        
+        async deleteDestination() {
+            const name = this.destinationForm.name;
+            
+            try {
+                await fetch(this.orthancUrl + '/modalities/' + name, {
+                    method: 'DELETE',
+                    credentials: 'include',
+                });
+                
+                this.toast(`Deleted ${name}`, 'success');
+                this.showDeleteConfirm = false;
+                this.closeDestinationModal();
+                await this.loadDestinations();
+                
+            } catch (e) {
+                console.error('Failed to delete destination:', e);
+                this.toast('Failed to delete: ' + (e.message || 'Unknown error'), 'error');
+            }
         },
     };
 }

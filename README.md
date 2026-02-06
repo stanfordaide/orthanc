@@ -78,26 +78,47 @@ make clean      # Remove containers
 
 ## Configuration
 
-Edit `.env` to customize:
+Copy the template and edit `.env` to customize:
 
 ```bash
-# Ports
+cp config/env.template .env
+```
+
+Default settings (from your original config):
+
+```bash
+# Ports (sequential from 8040)
 OPERATOR_UI_PORT=8040
 ORTHANC_WEB_PORT=8041
 OHIF_PORT=8042
+POSTGRES_PORT=8043
 
 # DICOM
-ORTHANC_AET=ORTHANC
+ORTHANC_AET=ORTHANC_LPCH
 DICOM_PORT=4242
 
-# Storage (can be network path)
-DICOM_STORAGE=./data/dicom
-POSTGRES_STORAGE=./data/postgres
+# Storage paths (your original /opt/orthanc locations)
+DICOM_STORAGE=/opt/orthanc/orthanc-storage
+POSTGRES_STORAGE=/opt/orthanc/postgres-data
 
-# Credentials
+# Credentials (your original)
 ORTHANC_USERNAME=orthanc_admin
-ORTHANC_PASSWORD=your_password
+ORTHANC_PASSWORD=helloaide123
+POSTGRES_PASSWORD=ChangeThisPassword  # Set this!
 ```
+
+**Important:** Set `POSTGRES_PASSWORD` in `.env` and update it in `config/orthanc.json` to match.
+
+## Pre-configured DICOM Destinations
+
+Your original modalities are preserved in `config/orthanc.json`:
+
+| Name | AE Title | Host | Port |
+|------|----------|------|------|
+| MERCURE | orthanc | 172.17.0.1 | 11112 |
+| LPCHROUTER | LPCHROUTER | 10.50.133.21 | 4000 |
+| LPCHTROUTER | LPCHTROUTER | 10.50.130.114 | 4000 |
+| MODLINK | PSRTBONEAPP01 | 10.251.201.59 | 104 |
 
 ## Adding DICOM Destinations
 

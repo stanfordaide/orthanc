@@ -10,6 +10,7 @@
 #
 # Quick start:
 #   cp config/env.template .env
+#   # Edit .env to set your POSTGRES_PASSWORD
 #   docker compose up -d
 #
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -52,10 +53,11 @@ services:
       - "${ORTHANC_WEB_PORT:-8041}:8042"
       - "${DICOM_PORT:-4242}:4242"
     volumes:
-      - ./lua:/etc/orthanc/lua:ro
+      # Mount Lua scripts - supports both old location and new
+      - ./lua-scripts:/etc/orthanc/lua:ro
       - orthanc-storage:/var/lib/orthanc/db
     environment:
-      - ORTHANC_NAME=${ORTHANC_AET:-ORTHANC}
+      - ORTHANC_NAME=${ORTHANC_AET:-ORTHANC_LPCH}
       - TZ=${TZ:-America/Los_Angeles}
     depends_on:
       orthanc-db:
@@ -66,6 +68,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 30s
 
   # ─────────────────────────────────────────────────────────────────────────────
   # OHIF VIEWER - Clinical image viewing
@@ -99,7 +102,7 @@ services:
     environment:
       - POSTGRES_DB=orthanc
       - POSTGRES_USER=${POSTGRES_USER:-orthanc}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-orthanc}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-ChangeThisPassword}
       - TZ=${TZ:-America/Los_Angeles}
     volumes:
       - orthanc-db-data:/var/lib/postgresql/data
@@ -110,6 +113,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECRETS
@@ -128,17 +132,20 @@ networks:
 # ═══════════════════════════════════════════════════════════════════════════════
 # VOLUMES
 # ═══════════════════════════════════════════════════════════════════════════════
+# Storage paths are configured via .env file
+# Default: /opt/orthanc/orthanc-storage and /opt/orthanc/postgres-data
+# ═══════════════════════════════════════════════════════════════════════════════
 volumes:
   orthanc-storage:
     driver: local
     driver_opts:
       type: 'none'
       o: 'bind'
-      device: '${DICOM_STORAGE:-./data/dicom}'
+      device: '${DICOM_STORAGE:-/opt/orthanc/orthanc-storage}'
 
   orthanc-db-data:
     driver: local
     driver_opts:
       type: 'none'
       o: 'bind'
-      device: '${POSTGRES_STORAGE:-./data/postgres}'
+      device: '${POSTGRES_STORAGE:-/opt/orthanc/postgres-data}'

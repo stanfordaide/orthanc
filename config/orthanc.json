@@ -19,7 +19,7 @@
       "Port" : 5432,
       "Database" : "orthanc",
       "Username" : "orthanc",
-      "Password" : "orthanc",
+      "Password" : "ChangeThisPassword",
       "EnableSsl" : false,
       "MaximumConnectionRetries" : 20,
       "ConnectionRetryInterval" : 5,
@@ -40,7 +40,7 @@
     "WebDavUploadAllowed" : true,
   
     "DicomServerEnabled" : true,
-    "DicomAet" : "ORTHANC",
+    "DicomAet" : "ORTHANC_LPCH",
     "DicomCheckCalledAet" : false,
     "DicomPort" : 4242,
     "DefaultEncoding" : "Latin1",
@@ -59,7 +59,7 @@
   
     "AuthenticationEnabled" : true,
     "RegisteredUsers" : {
-      "orthanc_admin": "orthanc"
+      "orthanc_admin": "helloaide123"
     },
   
     "DicomTlsEnabled" : false,
@@ -72,7 +72,12 @@
     "DicomAlwaysAllowMove" : false,
     "DicomCheckModalityHost" : false,
   
-    "DicomModalities" : {},
+    "DicomModalities" : {
+        "MERCURE" : [ "orthanc", "172.17.0.1", 11112 ],
+        "LPCHROUTER" : [ "LPCHROUTER", "10.50.133.21", 4000 ],
+        "LPCHTROUTER" : [ "LPCHTROUTER", "10.50.130.114", 4000 ],
+        "MODLINK" : [ "PSRTBONEAPP01", "10.251.201.59", 104 ]
+    },
     "DicomModalitiesInDatabase" : true,
     "DicomEchoChecksFind" : false,
   
@@ -130,5 +135,9 @@
     "DeidentifyLogs" : true,
     "DeidentifyLogsDicomVersion" : "2021b",
   
-    "CheckRevisions" : false
+    "CheckRevisions" : false,
+  
+    "Tcia" : {
+      "Enable" : true
+    }
 }
