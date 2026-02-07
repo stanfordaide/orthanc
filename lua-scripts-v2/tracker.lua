@@ -95,11 +95,23 @@ function Tracker.studyReceived(studyId, tags)
         return false
     end
     
+    -- Extract values as plain strings to avoid Json::LogicError
+    -- (Orthanc's tags object may not be a simple Lua table)
+    local studyUid = ""
+    local patientName = "Unknown"
+    local studyDesc = ""
+    
+    if tags then
+        if tags.StudyInstanceUID then studyUid = tostring(tags.StudyInstanceUID) end
+        if tags.PatientName then patientName = tostring(tags.PatientName) end
+        if tags.StudyDescription then studyDesc = tostring(tags.StudyDescription) end
+    end
+    
     local payload = {
-        study_id = studyId,
-        study_instance_uid = Utils.safeGet(tags, "StudyInstanceUID", ""),
-        patient_name = Utils.safeGet(tags, "PatientName", "Unknown"),
-        study_description = Utils.safeGet(tags, "StudyDescription", ""),
+        study_id = tostring(studyId),
+        study_instance_uid = studyUid,
+        patient_name = patientName,
+        study_description = studyDesc,
     }
     
     local endpoint = (Config.API and Config.API.ENDPOINTS and Config.API.ENDPOINTS.TRACK_START) 
