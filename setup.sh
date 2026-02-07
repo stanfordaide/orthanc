@@ -1309,9 +1309,32 @@ check_existing() {
                     log_info "Stopping existing containers..."
                     docker compose down 2>/dev/null || true
                 fi
-                # Preserve existing storage paths as defaults
-                DICOM_STORAGE="${existing_dicom_path:-$DEFAULT_DICOM_STORAGE}"
-                POSTGRES_STORAGE="${existing_db_path:-$DEFAULT_POSTGRES_STORAGE}"
+                
+                echo
+                echo -e "${YELLOW}Do you want to change any settings?${NC}"
+                echo "  1) Keep current settings (recommended)"
+                echo "  2) Reconfigure everything"
+                echo
+                read -p "Choice [1-2]: " reconfig_choice
+                
+                if [[ "$reconfig_choice" == "2" ]]; then
+                    # Clear variables so collect_config prompts for new values
+                    # But store old paths as defaults
+                    DEFAULT_DICOM_STORAGE="${existing_dicom_path:-$DEFAULT_DICOM_STORAGE}"
+                    DEFAULT_POSTGRES_STORAGE="${existing_db_path:-$DEFAULT_POSTGRES_STORAGE}"
+                    DICOM_STORAGE=""
+                    POSTGRES_STORAGE=""
+                    ORTHANC_AET=""
+                    ORTHANC_PASSWORD=""
+                    POSTGRES_PASSWORD=""
+                else
+                    # Keep existing values
+                    DICOM_STORAGE="${existing_dicom_path:-$DEFAULT_DICOM_STORAGE}"
+                    POSTGRES_STORAGE="${existing_db_path:-$DEFAULT_POSTGRES_STORAGE}"
+                    ORTHANC_AET="${ORTHANC_AET:-$DEFAULT_ORTHANC_AET}"
+                    ORTHANC_PASSWORD="${ORTHANC_PASSWORD:-$DEFAULT_ORTHANC_PASSWORD}"
+                    USE_EXISTING=true
+                fi
                 return 0
                 ;;
             2)
@@ -1345,6 +1368,15 @@ check_existing() {
                     [[ -n "$existing_dicom_path" ]] && rm -rf "$existing_dicom_path"/* 2>/dev/null
                     [[ -n "$existing_db_path" ]] && rm -rf "$existing_db_path"/* 2>/dev/null
                     rm -f .env 2>/dev/null
+                    
+                    # Clear all variables so collect_config will prompt for new values
+                    DICOM_STORAGE=""
+                    POSTGRES_STORAGE=""
+                    ORTHANC_AET=""
+                    ORTHANC_PASSWORD=""
+                    POSTGRES_PASSWORD=""
+                    USE_EXISTING=false
+                    
                     log_success "All data deleted. Proceeding with fresh install..."
                     return 0
                 else
