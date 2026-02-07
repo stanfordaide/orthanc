@@ -266,10 +266,25 @@ function Matcher.analyze(studyId, tags, instances)
     
     -- ─────────────────────────────────────────────────────────────────────────────
     -- CHECK 2: Does this match our routing patterns?
+    -- IMPORTANT: Only send to MERCURE if study does NOT already have AI output
+    -- This is a safety check to prevent re-processing studies that already went
+    -- through AI pipeline (defense in depth - CHECK 1 should catch this, but
+    -- this ensures we never accidentally re-send to MERCURE)
     -- ─────────────────────────────────────────────────────────────────────────────
     local matches, pattern = matchesBoneLengthStudy(studyDesc)
     
     if matches then
+        -- SAFETY: Double-check that this study doesn't already have AI output
+        -- This prevents infinite loops if hasAIResultMarker somehow missed it
+        if hasAIResultMarker(instances) then
+            Log.warn("Study matches bone length pattern but ALREADY has AI output - skipping MERCURE", {
+                studyId = studyId,
+                pattern = pattern,
+            })
+            result.reason = "already_has_ai_output"
+            return result
+        end
+        
         result.shouldRoute = true
         result.studyType = Matcher.STUDY_TYPES.ORIGINAL
         result.reason = "matches_bone_length_pattern"
