@@ -131,11 +131,20 @@ end
 -- Note: Orthanc provides global JsonEncode and ParseJson functions
 
 -- Safely encode to JSON
--- NOTE: We manually build JSON to avoid JsonEncode C++ exceptions that crash Orthanc
+-- NOTE: Use DumpJson (not JsonEncode) - it's what the original script uses and doesn't crash
 function Utils.toJson(tbl)
     if tbl == nil then return "{}" end
     
-    -- Manual JSON encoding for simple flat tables (no nested tables)
+    -- Try DumpJson first (Orthanc's built-in, used by original script)
+    local success, result = pcall(function()
+        return DumpJson(tbl)
+    end)
+    
+    if success and result then
+        return result
+    end
+    
+    -- Fallback: Manual JSON encoding for simple flat tables
     local parts = {}
     for key, value in pairs(tbl) do
         local keyStr = '"' .. tostring(key) .. '"'
@@ -186,12 +195,11 @@ end
 
 -- Make an HTTP POST request
 -- Returns: success (bool), response body or error
-function Utils.httpPost(url, body, contentType)
-    contentType = contentType or "application/json"
-    
+-- NOTE: Orthanc's HttpPost only takes (url, body) - no content type argument
+function Utils.httpPost(url, body)
     local success, result = pcall(function()
-        -- Orthanc's built-in HTTP function
-        return HttpPost(url, body, contentType)
+        -- Orthanc's built-in HTTP function for external calls
+        return HttpPost(url, body)
     end)
     
     return success, result

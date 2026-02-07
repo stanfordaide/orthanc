@@ -62,8 +62,8 @@ local function apiCall(endpoint, payload)
     
     Log.debug("API call", { url = url, payload = jsonPayload })
     
-    -- Make the HTTP request
-    local success, response = Utils.httpPost(url, jsonPayload, "application/json")
+    -- Make the HTTP request (Orthanc's HttpPost doesn't take content-type arg)
+    local success, response = Utils.httpPost(url, jsonPayload)
     
     if success then
         Log.debug("API call succeeded", { url = url })
