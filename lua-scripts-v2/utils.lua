@@ -175,9 +175,12 @@ function Utils.httpPost(url, body, contentType)
 end
 
 -- Make an HTTP GET request
+-- NOTE: Orthanc doesn't have HttpGet, so we use HttpPost with empty body
+-- For internal Orthanc API calls, use RestApiGet instead
 function Utils.httpGet(url)
     local success, result = pcall(function()
-        return HttpGet(url)
+        -- Use POST with empty body as workaround (some APIs accept this for health checks)
+        return HttpPost(url, "", "application/json")
     end)
     return success, result
 end

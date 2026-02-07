@@ -71,14 +71,8 @@ local allLoaded = Config and Utils and Log and Tracker and Matcher and Router
 if allLoaded then
     Log.info("All modules loaded successfully")
     
-    -- Health check the tracking API
-    if Tracker.healthCheck then
-        local healthy, msg = Tracker.healthCheck()
-        if not healthy then
-            Log.warn("Tracking API not available at startup", { message = msg })
-            Log.warn("Routing will continue but workflow tracking may not work")
-        end
-    end
+    -- Skip health check at startup - API might not be ready yet
+    -- Health can be checked later via CheckHealth() function
     
     -- Log configuration summary
     Log.info("Configuration loaded", {
