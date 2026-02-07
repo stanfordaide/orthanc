@@ -214,9 +214,16 @@ def health():
 @app.route('/track/start', methods=['POST'])
 def track_start():
     """Start tracking a new study workflow"""
+    # Debug: log raw request info
+    print(f"[track/start] Content-Type: {request.content_type}")
+    print(f"[track/start] Raw data: {request.data[:500] if request.data else 'EMPTY'}")
+    
     data = request.json or {}
+    print(f"[track/start] Parsed JSON: {data}")
+    
     study_id = data.get('study_id')
     if not study_id:
+        print(f"[track/start] ERROR: No study_id in request")
         return jsonify({'error': 'study_id required'}), 400
     
     conn = get_db()
