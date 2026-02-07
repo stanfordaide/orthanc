@@ -42,6 +42,16 @@ NON_INTERACTIVE=false
 USE_EXISTING=false
 FORCE_SETUP=false
 
+# Backup/restore options
+DO_BACKUP=false
+DO_RESTORE=false
+BACKUP_FILE=""
+RESTORE_FILE=""
+BACKUP_DIR="./backups"
+
+# Interactive menu mode
+INTERACTIVE_MENU=false
+
 # ─────────────────────────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────────
@@ -60,6 +70,625 @@ log_info() { echo -e "${BLUE}ℹ${NC}  $1"; }
 log_success() { echo -e "${GREEN}✓${NC}  $1"; }
 log_warn() { echo -e "${YELLOW}⚠${NC}  $1"; }
 log_error() { echo -e "${RED}✗${NC}  $1"; }
+
+# ─────────────────────────────────────────────────────────────────────────────────
+# INTERACTIVE MENU
+# ─────────────────────────────────────────────────────────────────────────────────
+
+show_interactive_menu() {
+    while true; do
+        clear
+        print_banner
+        
+        # Show current status
+        echo -e "${CYAN}Current Status:${NC}"
+        if docker compose ps --status running 2>/dev/null | grep -q orthanc; then
+            echo -e "  Services: ${GREEN}Running${NC}"
+        else
+            echo -e "  Services: ${YELLOW}Stopped${NC}"
+        fi
+        
+        if [[ -f .env ]]; then
+            source .env 2>/dev/null || true
+            echo -e "  DICOM Storage: ${YELLOW}${DICOM_STORAGE:-not set}${NC}"
+            echo -e "  PostgreSQL:    ${YELLOW}${POSTGRES_STORAGE:-not set}${NC}"
+        else
+            echo -e "  Config: ${YELLOW}Not configured${NC}"
+        fi
+        
+        # Show disk usage
+        local root_usage=$(df / 2>/dev/null | tail -1 | awk '{print $5}')
+        echo -e "  Root Disk: ${root_usage:-unknown}"
+        echo
+        
+        echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+        echo -e "${BLUE}  MAIN MENU${NC}"
+        echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+        echo
+        echo -e "  ${CYAN}SETUP & CONFIGURATION${NC}"
+        echo -e "    ${YELLOW}1${NC}) Install / Update (preserves existing data)"
+        echo -e "    ${YELLOW}2${NC}) Change Storage Locations"
+        echo -e "    ${YELLOW}3${NC}) Change Credentials"
+        echo -e "    ${YELLOW}4${NC}) Configure DICOM Modalities"
+        echo
+        echo -e "  ${CYAN}SERVICE MANAGEMENT${NC}"
+        echo -e "    ${YELLOW}5${NC}) Start Services"
+        echo -e "    ${YELLOW}6${NC}) Stop Services"
+        echo -e "    ${YELLOW}7${NC}) Restart Services"
+        echo -e "    ${YELLOW}8${NC}) View Logs"
+        echo -e "    ${YELLOW}9${NC}) Check Status"
+        echo
+        echo -e "  ${CYAN}BACKUP & RESTORE${NC}"
+        echo -e "    ${YELLOW}b${NC}) Backup Data"
+        echo -e "    ${YELLOW}r${NC}) Restore from Backup"
+        echo -e "    ${YELLOW}l${NC}) List Backups"
+        echo
+        echo -e "  ${CYAN}MAINTENANCE${NC}"
+        echo -e "    ${YELLOW}u${NC}) Upgrade (Pull Latest Images)"
+        echo -e "    ${YELLOW}c${NC}) Clean (Remove Containers, Keep Data)"
+        echo -e "    ${YELLOW}d${NC}) Delete Everything (⚠️  Destructive!)"
+        echo
+        echo -e "    ${YELLOW}q${NC}) Quit"
+        echo
+        echo -n "  Select option: "
+        
+        read -r choice
+        
+        case "$choice" in
+            1)
+                clear
+                do_fresh_setup
+                echo
+                read -p "Press Enter to continue..."
+                ;;
+            2)
+                clear
+                do_change_storage
+                echo
+                read -p "Press Enter to continue..."
+                ;;
+            3)
+                clear
+                do_change_credentials
+                echo
+                read -p "Press Enter to continue..."
+                ;;
+            4)
+                clear
+                do_configure_modalities
+                echo
+                read -p "Press Enter to continue..."
+                ;;
+            5)
+                clear
+                echo -e "${BLUE}Starting services...${NC}"
+                docker compose up -d
+                echo
+                log_success "Services started"
+                echo
+                read -p "Press Enter to continue..."
+                ;;
+            6)
+                clear
+                echo -e "${BLUE}Stopping services...${NC}"
+                docker compose stop
+                echo
+                log_success "Services stopped"
+                echo
+                read -p "Press Enter to continue..."
+                ;;
+            7)
+                clear
+                echo -e "${BLUE}Restarting services...${NC}"
+                docker compose restart
+                echo
+                log_success "Services restarted"
+                echo
+                read -p "Press Enter to continue..."
+                ;;
+            8)
+                clear
+                echo -e "${BLUE}Viewing logs (Ctrl+C to exit)...${NC}"
+                echo
+                docker compose logs -f --tail=100 || true
+                ;;
+            9)
+                clear
+                echo -e "${BLUE}Service Status:${NC}"
+                echo
+                docker compose ps -a
+                echo
+                if [[ -f .env ]]; then
+                    source .env
+                    echo -e "\n${CYAN}Access URLs:${NC}"
+                    echo -e "  Dashboard: http://localhost:${OPERATOR_UI_PORT:-8040}"
+                    echo -e "  Orthanc:   http://localhost:${ORTHANC_WEB_PORT:-8041}"
+                    echo -e "  OHIF:      http://localhost:${OHIF_PORT:-8042}"
+                    echo -e "  Grafana:   http://localhost:${GRAFANA_PORT:-8045}"
+                fi
+                echo
+                read -p "Press Enter to continue..."
+                ;;
+            b|B)
+                clear
+                do_backup
+                echo
+                read -p "Press Enter to continue..."
+                ;;
+            r|R)
+                clear
+                do_interactive_restore
+                echo
+                read -p "Press Enter to continue..."
+                ;;
+            l|L)
+                clear
+                echo -e "${BLUE}Available Backups:${NC}"
+                echo
+                if ls backups/*.tar.gz 2>/dev/null; then
+                    ls -lah backups/*.tar.gz
+                else
+                    echo "  No backups found in ./backups/"
+                fi
+                echo
+                read -p "Press Enter to continue..."
+                ;;
+            u|U)
+                clear
+                echo -e "${BLUE}Upgrading services...${NC}"
+                docker compose pull
+                docker compose up -d
+                echo
+                log_success "Upgrade complete"
+                echo
+                read -p "Press Enter to continue..."
+                ;;
+            c|C)
+                clear
+                echo -e "${YELLOW}This will remove containers but keep your data.${NC}"
+                read -p "Continue? [y/N]: " confirm
+                if [[ "$confirm" =~ ^[Yy] ]]; then
+                    docker compose down
+                    log_success "Containers removed. Data preserved."
+                fi
+                echo
+                read -p "Press Enter to continue..."
+                ;;
+            d|D)
+                clear
+                do_interactive_delete
+                echo
+                read -p "Press Enter to continue..."
+                ;;
+            q|Q)
+                clear
+                echo "Goodbye!"
+                exit 0
+                ;;
+            *)
+                echo
+                log_warn "Invalid option: $choice"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+do_fresh_setup() {
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}  INSTALL / UPDATE${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+    echo
+    
+    # Run the normal setup flow
+    NON_INTERACTIVE=false
+    check_existing
+    collect_config
+    show_summary
+    
+    echo
+    read -p "Proceed with setup? [Y/n]: " confirm
+    if [[ "$confirm" =~ ^[Nn] ]]; then
+        echo "Setup cancelled."
+        return
+    fi
+    
+    echo
+    create_env_file
+    update_orthanc_json
+    create_directories
+    make_executable
+    start_services
+    if [[ $? -eq 0 ]]; then
+        seed_modalities
+    fi
+    print_completion
+}
+
+do_change_storage() {
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}  CHANGE STORAGE LOCATIONS${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+    echo
+    
+    # Load current config
+    if [[ -f .env ]]; then
+        source .env
+    fi
+    
+    local current_dicom="${DICOM_STORAGE:-$DEFAULT_DICOM_STORAGE}"
+    local current_postgres="${POSTGRES_STORAGE:-$DEFAULT_POSTGRES_STORAGE}"
+    
+    echo -e "${CYAN}Current Storage Locations:${NC}"
+    echo "  DICOM:      $current_dicom"
+    echo "  PostgreSQL: $current_postgres"
+    echo
+    
+    # Show disk space
+    echo -e "${CYAN}Disk Space:${NC}"
+    df -h / /home 2>/dev/null | head -5
+    echo
+    
+    echo -e "${YELLOW}Enter new storage locations (or press Enter to keep current):${NC}"
+    echo
+    
+    read -p "DICOM storage path [$current_dicom]: " new_dicom
+    new_dicom="${new_dicom:-$current_dicom}"
+    
+    read -p "PostgreSQL data path [$current_postgres]: " new_postgres
+    new_postgres="${new_postgres:-$current_postgres}"
+    
+    if [[ "$new_dicom" == "$current_dicom" && "$new_postgres" == "$current_postgres" ]]; then
+        log_info "No changes made."
+        return
+    fi
+    
+    echo
+    echo -e "${YELLOW}⚠️  Changing storage locations requires:${NC}"
+    echo "  1. Stopping services"
+    echo "  2. Moving data to new location"
+    echo "  3. Updating configuration"
+    echo "  4. Restarting services"
+    echo
+    echo -e "${CYAN}Options:${NC}"
+    echo "  1) Backup first, then move (recommended)"
+    echo "  2) Move data directly"
+    echo "  3) Start fresh at new location (loses existing data)"
+    echo "  4) Cancel"
+    echo
+    read -p "Choose option [1-4]: " move_option
+    
+    case "$move_option" in
+        1)
+            echo
+            log_info "Creating backup first..."
+            do_backup
+            echo
+            DICOM_STORAGE="$new_dicom"
+            POSTGRES_STORAGE="$new_postgres"
+            log_info "Restoring to new location..."
+            RESTORE_FILE=$(ls -t backups/*.tar.gz 2>/dev/null | head -1)
+            if [[ -n "$RESTORE_FILE" ]]; then
+                do_restore
+            else
+                log_error "No backup file found"
+            fi
+            ;;
+        2)
+            echo
+            log_info "Stopping services..."
+            docker compose down
+            
+            log_info "Moving DICOM data..."
+            sudo mkdir -p "$new_dicom"
+            sudo mv "$current_dicom"/* "$new_dicom/" 2>/dev/null || true
+            sudo chown -R 1000:1000 "$new_dicom"
+            
+            log_info "Moving PostgreSQL data..."
+            sudo mkdir -p "$new_postgres"
+            sudo mv "$current_postgres"/* "$new_postgres/" 2>/dev/null || true
+            sudo chown -R 999:999 "$new_postgres"
+            
+            log_info "Updating configuration..."
+            sed -i "s|^DICOM_STORAGE=.*|DICOM_STORAGE=$new_dicom|" .env
+            sed -i "s|^POSTGRES_STORAGE=.*|POSTGRES_STORAGE=$new_postgres|" .env
+            
+            log_info "Starting services..."
+            docker compose up -d
+            
+            log_success "Storage locations changed successfully!"
+            ;;
+        3)
+            echo
+            log_warn "This will lose all existing data!"
+            read -p "Are you sure? Type 'DELETE' to confirm: " confirm
+            if [[ "$confirm" == "DELETE" ]]; then
+                docker compose down
+                DICOM_STORAGE="$new_dicom"
+                POSTGRES_STORAGE="$new_postgres"
+                create_env_file
+                create_directories
+                docker compose up -d
+                log_success "Fresh start at new location!"
+            else
+                log_info "Cancelled."
+            fi
+            ;;
+        *)
+            log_info "Cancelled."
+            ;;
+    esac
+}
+
+do_change_credentials() {
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}  CHANGE CREDENTIALS${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+    echo
+    
+    if [[ -f .env ]]; then
+        source .env
+    fi
+    
+    echo -e "${CYAN}Current Credentials:${NC}"
+    echo "  Orthanc Username: ${ORTHANC_USERNAME:-orthanc_admin}"
+    echo "  Orthanc Password: ${ORTHANC_PASSWORD:-<not set>}"
+    echo "  PostgreSQL User:  ${POSTGRES_USER:-orthanc}"
+    echo "  PostgreSQL Pass:  ${POSTGRES_PASSWORD:-<not set>}"
+    echo
+    
+    echo -e "${YELLOW}What would you like to change?${NC}"
+    echo "  1) Orthanc admin password"
+    echo "  2) Generate new passwords for everything"
+    echo "  3) Cancel"
+    echo
+    read -p "Choose option [1-3]: " cred_option
+    
+    case "$cred_option" in
+        1)
+            echo
+            read -s -p "New Orthanc password: " new_pass
+            echo
+            read -s -p "Confirm password: " confirm_pass
+            echo
+            
+            if [[ "$new_pass" != "$confirm_pass" ]]; then
+                log_error "Passwords don't match!"
+                return
+            fi
+            
+            ORTHANC_PASSWORD="$new_pass"
+            sed -i "s|^ORTHANC_PASSWORD=.*|ORTHANC_PASSWORD=$new_pass|" .env
+            update_orthanc_json
+            
+            log_info "Restarting Orthanc to apply changes..."
+            docker compose restart orthanc
+            
+            log_success "Orthanc password changed!"
+            ;;
+        2)
+            echo
+            local new_orthanc_pass=$(generate_password)
+            local new_postgres_pass=$(generate_password)
+            
+            ORTHANC_PASSWORD="$new_orthanc_pass"
+            POSTGRES_PASSWORD="$new_postgres_pass"
+            
+            log_warn "This will require recreating the database!"
+            read -p "Continue? [y/N]: " confirm
+            if [[ ! "$confirm" =~ ^[Yy] ]]; then
+                return
+            fi
+            
+            sed -i "s|^ORTHANC_PASSWORD=.*|ORTHANC_PASSWORD=$new_orthanc_pass|" .env
+            sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$new_postgres_pass|" .env
+            update_orthanc_json
+            
+            log_info "New credentials generated:"
+            echo "  Orthanc:    orthanc_admin / $new_orthanc_pass"
+            echo "  PostgreSQL: orthanc / $new_postgres_pass"
+            
+            log_warn "You'll need to recreate the database for PostgreSQL password change."
+            ;;
+        *)
+            log_info "Cancelled."
+            ;;
+    esac
+}
+
+do_configure_modalities() {
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}  CONFIGURE DICOM MODALITIES${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+    echo
+    
+    if [[ -f .env ]]; then
+        source .env
+    fi
+    
+    local orthanc_url="http://localhost:${ORTHANC_WEB_PORT:-8041}"
+    local auth="${ORTHANC_USERNAME:-orthanc_admin}:${ORTHANC_PASSWORD:-helloaide123}"
+    
+    # Check if Orthanc is running
+    if ! curl -s -u "$auth" "$orthanc_url/system" &>/dev/null; then
+        log_error "Orthanc is not running. Start services first."
+        return
+    fi
+    
+    echo -e "${CYAN}Current DICOM Modalities:${NC}"
+    echo
+    local modalities=$(curl -s -u "$auth" "$orthanc_url/modalities" 2>/dev/null)
+    if [[ -n "$modalities" && "$modalities" != "[]" ]]; then
+        for mod in $(echo "$modalities" | tr -d '[]"' | tr ',' ' '); do
+            local details=$(curl -s -u "$auth" "$orthanc_url/modalities/$mod" 2>/dev/null)
+            echo "  $mod: $details"
+        done
+    else
+        echo "  No modalities configured"
+    fi
+    echo
+    
+    echo -e "${YELLOW}Options:${NC}"
+    echo "  1) Add new modality"
+    echo "  2) Remove modality"
+    echo "  3) Test modality (C-ECHO)"
+    echo "  4) Reset to defaults"
+    echo "  5) Back to menu"
+    echo
+    read -p "Choose option [1-5]: " mod_option
+    
+    case "$mod_option" in
+        1)
+            echo
+            read -p "Modality name (e.g., WORKSTATION1): " mod_name
+            read -p "AE Title: " mod_aet
+            read -p "Host/IP: " mod_host
+            read -p "Port: " mod_port
+            
+            local config="{\"AET\":\"$mod_aet\",\"Host\":\"$mod_host\",\"Port\":$mod_port,\"AllowEcho\":true,\"AllowStore\":true}"
+            
+            if curl -s -u "$auth" -X PUT "$orthanc_url/modalities/$mod_name" \
+                -H "Content-Type: application/json" -d "$config" &>/dev/null; then
+                log_success "Modality '$mod_name' added!"
+            else
+                log_error "Failed to add modality"
+            fi
+            ;;
+        2)
+            echo
+            read -p "Modality name to remove: " mod_name
+            if curl -s -u "$auth" -X DELETE "$orthanc_url/modalities/$mod_name" &>/dev/null; then
+                log_success "Modality '$mod_name' removed!"
+            else
+                log_error "Failed to remove modality"
+            fi
+            ;;
+        3)
+            echo
+            read -p "Modality name to test: " mod_name
+            echo "Testing C-ECHO to $mod_name..."
+            if curl -s -u "$auth" -X POST "$orthanc_url/modalities/$mod_name/echo" &>/dev/null; then
+                log_success "C-ECHO successful!"
+            else
+                log_error "C-ECHO failed"
+            fi
+            ;;
+        4)
+            echo
+            log_info "Resetting to default modalities..."
+            seed_modalities
+            ;;
+        *)
+            return
+            ;;
+    esac
+}
+
+do_interactive_restore() {
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}  RESTORE FROM BACKUP${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+    echo
+    
+    echo -e "${CYAN}Available Backups:${NC}"
+    echo
+    
+    local backups=($(ls -t backups/*.tar.gz 2>/dev/null))
+    
+    if [[ ${#backups[@]} -eq 0 ]]; then
+        log_warn "No backups found in ./backups/"
+        echo
+        read -p "Enter path to backup file: " custom_path
+        if [[ -f "$custom_path" ]]; then
+            RESTORE_FILE="$custom_path"
+        else
+            log_error "File not found: $custom_path"
+            return
+        fi
+    else
+        local i=1
+        for backup in "${backups[@]}"; do
+            local size=$(du -h "$backup" 2>/dev/null | cut -f1)
+            local date=$(stat -c %y "$backup" 2>/dev/null | cut -d. -f1)
+            echo "  $i) $(basename "$backup") ($size, $date)"
+            ((i++))
+        done
+        echo
+        read -p "Select backup [1-${#backups[@]}] or enter path: " selection
+        
+        if [[ "$selection" =~ ^[0-9]+$ ]] && [[ "$selection" -ge 1 ]] && [[ "$selection" -le ${#backups[@]} ]]; then
+            RESTORE_FILE="${backups[$((selection-1))]}"
+        elif [[ -f "$selection" ]]; then
+            RESTORE_FILE="$selection"
+        else
+            log_error "Invalid selection"
+            return
+        fi
+    fi
+    
+    echo
+    log_info "Selected: $RESTORE_FILE"
+    echo
+    
+    # Ask about restore location
+    if [[ -f .env ]]; then
+        source .env
+    fi
+    
+    echo -e "${YELLOW}Restore to:${NC}"
+    echo "  1) Current location (${DICOM_STORAGE:-$DEFAULT_DICOM_STORAGE})"
+    echo "  2) New location"
+    echo
+    read -p "Choose [1-2]: " loc_choice
+    
+    if [[ "$loc_choice" == "2" ]]; then
+        read -p "New DICOM storage path: " DICOM_STORAGE
+        read -p "New PostgreSQL data path: " POSTGRES_STORAGE
+    fi
+    
+    do_restore
+}
+
+do_interactive_delete() {
+    echo -e "${RED}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${RED}  ⚠️  DELETE EVERYTHING${NC}"
+    echo -e "${RED}═══════════════════════════════════════════════════════════════${NC}"
+    echo
+    
+    if [[ -f .env ]]; then
+        source .env
+    fi
+    
+    echo -e "${YELLOW}This will permanently delete:${NC}"
+    echo "  - All Docker containers and images"
+    echo "  - DICOM storage: ${DICOM_STORAGE:-$DEFAULT_DICOM_STORAGE}"
+    echo "  - PostgreSQL data: ${POSTGRES_STORAGE:-$DEFAULT_POSTGRES_STORAGE}"
+    echo "  - Configuration files"
+    echo
+    
+    echo -e "${RED}THIS CANNOT BE UNDONE!${NC}"
+    echo
+    read -p "Type 'DELETE EVERYTHING' to confirm: " confirm
+    
+    if [[ "$confirm" == "DELETE EVERYTHING" ]]; then
+        echo
+        log_info "Stopping and removing containers..."
+        docker compose down -v 2>/dev/null || true
+        
+        log_info "Removing storage directories..."
+        sudo rm -rf "${DICOM_STORAGE:-$DEFAULT_DICOM_STORAGE}" 2>/dev/null || true
+        sudo rm -rf "${POSTGRES_STORAGE:-$DEFAULT_POSTGRES_STORAGE}" 2>/dev/null || true
+        
+        log_info "Removing configuration..."
+        rm -f .env 2>/dev/null || true
+        
+        echo
+        log_success "Everything deleted."
+        echo "Run './setup.sh' to start fresh."
+    else
+        log_info "Cancelled. Nothing was deleted."
+    fi
+}
 
 generate_password() {
     openssl rand -base64 24 | tr -d '/+=' | head -c 20
@@ -142,6 +771,274 @@ validate_path() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────────
+# BACKUP AND RESTORE
+# ─────────────────────────────────────────────────────────────────────────────────
+
+do_backup() {
+    echo
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}  ORTHANC BACKUP${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+    echo
+    
+    # Load current config
+    if [[ -f .env ]]; then
+        source .env
+    fi
+    
+    local dicom_path="${DICOM_STORAGE:-$DEFAULT_DICOM_STORAGE}"
+    local postgres_path="${POSTGRES_STORAGE:-$DEFAULT_POSTGRES_STORAGE}"
+    
+    # Create backup directory
+    mkdir -p "$BACKUP_DIR"
+    
+    # Generate backup filename if not specified
+    if [[ -z "$BACKUP_FILE" ]]; then
+        BACKUP_FILE="$BACKUP_DIR/orthanc-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
+    elif [[ ! "$BACKUP_FILE" =~ ^/ ]]; then
+        # If relative path, put in backup dir
+        BACKUP_FILE="$BACKUP_DIR/$BACKUP_FILE"
+    fi
+    
+    local backup_tmp=$(mktemp -d)
+    local backup_name=$(basename "$BACKUP_FILE" .tar.gz)
+    
+    log_info "Creating backup: $BACKUP_FILE"
+    log_info "DICOM storage: $dicom_path"
+    log_info "PostgreSQL data: $postgres_path"
+    
+    # Check if services are running
+    local services_running=false
+    if docker compose ps --status running 2>/dev/null | grep -q orthanc; then
+        services_running=true
+    fi
+    
+    # Step 1: Backup PostgreSQL (if running, use pg_dump for consistency)
+    log_info "Backing up PostgreSQL database..."
+    mkdir -p "$backup_tmp/postgres"
+    
+    if [[ "$services_running" == true ]]; then
+        # Use pg_dump for live backup
+        if docker compose exec -T orthanc-db pg_dump -U orthanc orthanc > "$backup_tmp/postgres/orthanc.sql" 2>/dev/null; then
+            log_success "Database dumped via pg_dump"
+        else
+            log_warn "pg_dump failed, copying data directory instead"
+            if [[ -d "$postgres_path" ]]; then
+                sudo cp -a "$postgres_path"/* "$backup_tmp/postgres/" 2>/dev/null || \
+                    cp -a "$postgres_path"/* "$backup_tmp/postgres/"
+            fi
+        fi
+    else
+        # Services not running, copy data directory
+        if [[ -d "$postgres_path" ]]; then
+            log_info "Copying PostgreSQL data directory..."
+            sudo cp -a "$postgres_path"/* "$backup_tmp/postgres/" 2>/dev/null || \
+                cp -a "$postgres_path"/* "$backup_tmp/postgres/"
+            log_success "PostgreSQL data copied"
+        else
+            log_warn "PostgreSQL data directory not found: $postgres_path"
+        fi
+    fi
+    
+    # Step 2: Backup DICOM storage
+    log_info "Backing up DICOM storage..."
+    mkdir -p "$backup_tmp/dicom"
+    
+    if [[ -d "$dicom_path" ]]; then
+        local dicom_size=$(du -sh "$dicom_path" 2>/dev/null | cut -f1)
+        log_info "DICOM storage size: $dicom_size"
+        
+        # Copy DICOM data
+        sudo cp -a "$dicom_path"/* "$backup_tmp/dicom/" 2>/dev/null || \
+            cp -a "$dicom_path"/* "$backup_tmp/dicom/" 2>/dev/null || true
+        log_success "DICOM data copied"
+    else
+        log_warn "DICOM storage directory not found: $dicom_path"
+    fi
+    
+    # Step 3: Backup configuration
+    log_info "Backing up configuration..."
+    mkdir -p "$backup_tmp/config"
+    cp .env "$backup_tmp/config/" 2>/dev/null || true
+    cp config/orthanc.json "$backup_tmp/config/" 2>/dev/null || true
+    
+    # Step 4: Create metadata file
+    cat > "$backup_tmp/backup-info.txt" << EOF
+Orthanc Backup
+==============
+Created: $(date)
+Host: $(hostname)
+DICOM Storage: $dicom_path
+PostgreSQL Path: $postgres_path
+Services Running: $services_running
+
+Contents:
+- postgres/   : PostgreSQL data or SQL dump
+- dicom/      : DICOM storage files
+- config/     : Configuration files (.env, orthanc.json)
+EOF
+    
+    # Step 5: Create tarball
+    log_info "Compressing backup..."
+    cd "$backup_tmp"
+    tar -czf "$BACKUP_FILE" . 2>/dev/null
+    cd - > /dev/null
+    
+    # Cleanup
+    rm -rf "$backup_tmp"
+    
+    local backup_size=$(du -sh "$BACKUP_FILE" 2>/dev/null | cut -f1)
+    
+    echo
+    echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║  ✅  BACKUP COMPLETE                                          ║${NC}"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
+    echo
+    echo -e "  Backup file: ${YELLOW}$BACKUP_FILE${NC}"
+    echo -e "  Size: ${YELLOW}$backup_size${NC}"
+    echo
+    echo -e "  To restore: ${CYAN}./setup.sh --restore $BACKUP_FILE${NC}"
+    echo
+}
+
+do_restore() {
+    echo
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}  ORTHANC RESTORE${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+    echo
+    
+    if [[ -z "$RESTORE_FILE" || ! -f "$RESTORE_FILE" ]]; then
+        log_error "Backup file not found: $RESTORE_FILE"
+        exit 1
+    fi
+    
+    log_info "Restoring from: $RESTORE_FILE"
+    
+    # Load current or default config for target paths
+    if [[ -f .env ]]; then
+        source .env
+    fi
+    
+    # Use command-line args if provided, otherwise use .env or defaults
+    local dicom_path="${DICOM_STORAGE:-$DEFAULT_DICOM_STORAGE}"
+    local postgres_path="${POSTGRES_STORAGE:-$DEFAULT_POSTGRES_STORAGE}"
+    
+    log_info "Target DICOM storage: $dicom_path"
+    log_info "Target PostgreSQL data: $postgres_path"
+    
+    # Stop services if running
+    if docker compose ps --status running 2>/dev/null | grep -q orthanc; then
+        log_info "Stopping services..."
+        docker compose down 2>/dev/null || true
+    fi
+    
+    # Confirm restore
+    if [[ "$NON_INTERACTIVE" != true ]]; then
+        echo
+        echo -e "${YELLOW}⚠️  This will overwrite existing data at:${NC}"
+        echo "   - $dicom_path"
+        echo "   - $postgres_path"
+        echo
+        read -p "Continue with restore? [y/N]: " confirm
+        if [[ ! "$confirm" =~ ^[Yy] ]]; then
+            log_info "Restore cancelled"
+            exit 0
+        fi
+    fi
+    
+    # Extract backup
+    local restore_tmp=$(mktemp -d)
+    log_info "Extracting backup..."
+    tar -xzf "$RESTORE_FILE" -C "$restore_tmp"
+    
+    # Create target directories
+    log_info "Creating target directories..."
+    sudo mkdir -p "$dicom_path" "$postgres_path" 2>/dev/null || \
+        mkdir -p "$dicom_path" "$postgres_path"
+    
+    # Restore PostgreSQL
+    log_info "Restoring PostgreSQL data..."
+    if [[ -f "$restore_tmp/postgres/orthanc.sql" ]]; then
+        # SQL dump - need to start DB first and restore
+        log_info "Found SQL dump, will restore after starting database"
+        RESTORE_SQL="$restore_tmp/postgres/orthanc.sql"
+    elif [[ -d "$restore_tmp/postgres" && "$(ls -A $restore_tmp/postgres 2>/dev/null)" ]]; then
+        # Data directory copy
+        sudo rm -rf "$postgres_path"/* 2>/dev/null || rm -rf "$postgres_path"/*
+        sudo cp -a "$restore_tmp/postgres"/* "$postgres_path/" 2>/dev/null || \
+            cp -a "$restore_tmp/postgres"/* "$postgres_path/"
+        sudo chown -R 999:999 "$postgres_path" 2>/dev/null || \
+            chown -R 999:999 "$postgres_path" 2>/dev/null || true
+        log_success "PostgreSQL data restored"
+    fi
+    
+    # Restore DICOM storage
+    log_info "Restoring DICOM storage..."
+    if [[ -d "$restore_tmp/dicom" && "$(ls -A $restore_tmp/dicom 2>/dev/null)" ]]; then
+        sudo rm -rf "$dicom_path"/* 2>/dev/null || rm -rf "$dicom_path"/*
+        sudo cp -a "$restore_tmp/dicom"/* "$dicom_path/" 2>/dev/null || \
+            cp -a "$restore_tmp/dicom"/* "$dicom_path/"
+        sudo chown -R 1000:1000 "$dicom_path" 2>/dev/null || \
+            chown -R 1000:1000 "$dicom_path" 2>/dev/null || true
+        log_success "DICOM storage restored"
+    fi
+    
+    # Restore config if not overriding
+    if [[ -f "$restore_tmp/config/.env" && ! -f .env ]]; then
+        log_info "Restoring configuration..."
+        cp "$restore_tmp/config/.env" .env
+        cp "$restore_tmp/config/orthanc.json" config/orthanc.json 2>/dev/null || true
+    fi
+    
+    # Update .env with new paths if specified
+    if [[ -n "$DICOM_STORAGE" || -n "$POSTGRES_STORAGE" ]]; then
+        log_info "Updating storage paths in .env..."
+        if [[ -n "$DICOM_STORAGE" ]]; then
+            sed -i "s|^DICOM_STORAGE=.*|DICOM_STORAGE=$DICOM_STORAGE|" .env
+        fi
+        if [[ -n "$POSTGRES_STORAGE" ]]; then
+            sed -i "s|^POSTGRES_STORAGE=.*|POSTGRES_STORAGE=$POSTGRES_STORAGE|" .env
+        fi
+    fi
+    
+    # Start services
+    log_info "Starting services..."
+    docker compose up -d
+    
+    # Wait for DB to be ready
+    log_info "Waiting for database to be ready..."
+    sleep 10
+    
+    # If we have SQL dump, restore it now
+    if [[ -n "${RESTORE_SQL:-}" && -f "$RESTORE_SQL" ]]; then
+        log_info "Restoring SQL dump..."
+        # Wait a bit more for DB
+        sleep 5
+        if docker compose exec -T orthanc-db psql -U orthanc orthanc < "$RESTORE_SQL" 2>/dev/null; then
+            log_success "SQL dump restored"
+        else
+            log_warn "SQL restore may have had issues - check logs"
+        fi
+    fi
+    
+    # Cleanup
+    rm -rf "$restore_tmp"
+    
+    echo
+    echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║  ✅  RESTORE COMPLETE                                         ║${NC}"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
+    echo
+    echo -e "  DICOM storage: ${YELLOW}$dicom_path${NC}"
+    echo -e "  PostgreSQL data: ${YELLOW}$postgres_path${NC}"
+    echo
+    echo -e "  Check status: ${CYAN}docker compose ps${NC}"
+    echo -e "  View logs: ${CYAN}docker compose logs -f${NC}"
+    echo
+}
+
+# ─────────────────────────────────────────────────────────────────────────────────
 # PARSE ARGUMENTS
 # ─────────────────────────────────────────────────────────────────────────────────
 
@@ -149,7 +1046,13 @@ show_usage() {
     cat << EOF
 Usage: $0 [OPTIONS]
 
-OPTIONS:
+When run without options, shows an interactive menu.
+
+INTERACTIVE MODE:
+  $0                  Show interactive menu (recommended)
+  $0 --menu           Same as above
+
+DIRECT SETUP OPTIONS:
   --dicom PATH        DICOM storage path (default: $DEFAULT_DICOM_STORAGE)
   --db PATH           PostgreSQL data path (default: $DEFAULT_POSTGRES_STORAGE)
   --aet NAME          DICOM AE Title (default: $DEFAULT_ORTHANC_AET)
@@ -158,26 +1061,30 @@ OPTIONS:
   --defaults          Use all default values (non-interactive)
   --non-interactive   Skip all prompts
   --force             Overwrite existing configuration without prompting
+
+BACKUP/RESTORE:
+  --backup [FILE]     Backup DICOM data and database to file
+  --restore FILE      Restore from backup file
+  --backup-dir DIR    Directory to store backups (default: ./backups)
+
+OTHER:
   -h, --help          Show this help
 
 EXAMPLES:
-  $0                                          # Interactive setup
+  $0                                          # Interactive menu (recommended)
   $0 --defaults                               # Quick setup with defaults
-  $0 --dicom /mnt/nas/orthanc/dicom           # Custom DICOM storage
-  $0 --dicom /data/dicom --db /data/postgres  # Custom paths for both
-  $0 --force --defaults                       # Re-setup without prompts
+  $0 --backup                                 # Create backup
+  $0 --restore backups/orthanc-backup-*.tar.gz --dicom /home/orthanc/dicom
 
-RE-RUNNING SETUP:
-  It's safe to run setup again on an existing installation.
-  You'll be prompted to update or keep the existing configuration.
-
-ENVIRONMENT VARIABLES:
-  You can also set these before running:
-    DICOM_STORAGE=/path/to/dicom
-    POSTGRES_STORAGE=/path/to/postgres
-    ORTHANC_AET=MY_AET
-    ORTHANC_PASSWORD=my_password
-    POSTGRES_PASSWORD=db_password
+The interactive menu provides:
+  - Fresh install / reconfigure
+  - Change storage locations (with migration)
+  - Change credentials
+  - Manage DICOM modalities
+  - Start/stop/restart services
+  - Backup and restore
+  - View logs and status
+  - Complete uninstall
 
 EOF
 }
@@ -217,6 +1124,28 @@ parse_args() {
             --force)
                 FORCE_SETUP=true
                 NON_INTERACTIVE=true
+                shift
+                ;;
+            --backup)
+                DO_BACKUP=true
+                # Check if next arg is a filename (not another option)
+                if [[ -n "${2:-}" && ! "$2" =~ ^-- ]]; then
+                    BACKUP_FILE="$2"
+                    shift
+                fi
+                shift
+                ;;
+            --restore)
+                DO_RESTORE=true
+                RESTORE_FILE="$2"
+                shift 2
+                ;;
+            --backup-dir)
+                BACKUP_DIR="$2"
+                shift 2
+                ;;
+            --menu)
+                INTERACTIVE_MENU=true
                 shift
                 ;;
             -h|--help)
@@ -752,8 +1681,32 @@ main() {
     ORTHANC_PASSWORD_ENV="${ORTHANC_PASSWORD:-}"
     POSTGRES_PASSWORD_ENV="${POSTGRES_PASSWORD:-}"
     
+    # If no arguments, show interactive menu
+    if [[ $# -eq 0 ]]; then
+        show_interactive_menu
+        exit 0
+    fi
+    
     parse_args "$@"
     
+    # Handle --menu flag
+    if [[ "$INTERACTIVE_MENU" == true ]]; then
+        show_interactive_menu
+        exit 0
+    fi
+    
+    # Handle backup/restore operations first
+    if [[ "$DO_BACKUP" == true ]]; then
+        do_backup
+        exit 0
+    fi
+    
+    if [[ "$DO_RESTORE" == true ]]; then
+        do_restore
+        exit 0
+    fi
+    
+    # Normal setup flow (when args provided)
     print_banner
     check_existing
     collect_config

@@ -10,7 +10,7 @@
 #
 # ═══════════════════════════════════════════════════════════════════════════════
 
-.PHONY: help setup install quick-setup start stop restart logs status clean reset uninstall upgrade backup validate seed-modalities
+.PHONY: help setup install quick-setup start stop restart logs status clean reset uninstall upgrade backup restore backup-list validate seed-modalities rebuild menu
 
 # Overridable variables with defaults
 DICOM_STORAGE ?= /opt/orthanc/orthanc-storage
@@ -24,9 +24,12 @@ ORTHANC_AET ?= ORTHANC_LPCH
 help:
 	@echo "🏥 ORTHANC MANAGEMENT"
 	@echo ""
-	@echo "SETUP"
-	@echo "  make setup                  Interactive setup wizard (safe to re-run)"
+	@echo "GETTING STARTED"
+	@echo "  make menu                   ⭐ Interactive menu (recommended)"
+	@echo "  make setup                  Direct setup wizard"
 	@echo "  make quick-setup            Quick setup with defaults"
+	@echo ""
+	@echo "SETUP"
 	@echo "  make setup DICOM_STORAGE=/path POSTGRES_STORAGE=/path"
 	@echo "                              Setup with custom paths"
 	@echo ""
@@ -39,12 +42,16 @@ help:
 	@echo ""
 	@echo "MAINTENANCE"
 	@echo "  make upgrade                Pull latest images and restart"
-	@echo "  make backup                 Create backup (not implemented)"
 	@echo "  make clean                  Remove containers (keeps data)"
 	@echo "  make reset                  Reset config (keeps data, regenerates .env)"
 	@echo "  make uninstall              Remove everything (DANGER: deletes all data!)"
 	@echo "  make seed-modalities        Add default DICOM destinations"
 	@echo "  make validate               Check configuration"
+	@echo ""
+	@echo "BACKUP/RESTORE"
+	@echo "  make backup                 Create backup of DICOM data and database"
+	@echo "  make restore FILE=path      Restore from backup file"
+	@echo "  make backup-list            List available backups"
 	@echo ""
 	@echo "PORTS (defaults)"
 	@echo "  8040  Operator Dashboard"
@@ -65,16 +72,25 @@ help:
 	@echo "  make uninstall"
 
 # ─────────────────────────────────────────────────────────────────────────────────
+# INTERACTIVE MENU (Recommended)
+# ─────────────────────────────────────────────────────────────────────────────────
+
+# Full interactive menu - manage everything from here
+menu:
+	@chmod +x setup.sh
+	@./setup.sh
+
+# ─────────────────────────────────────────────────────────────────────────────────
 # SETUP
 # ─────────────────────────────────────────────────────────────────────────────────
 
-# Interactive setup wizard
+# Direct setup (bypasses interactive menu)
 setup:
 	@chmod +x setup.sh
 	@DICOM_STORAGE="$(DICOM_STORAGE)" \
 	 POSTGRES_STORAGE="$(POSTGRES_STORAGE)" \
 	 ORTHANC_AET="$(ORTHANC_AET)" \
-	 ./setup.sh
+	 ./setup.sh --defaults
 
 # Quick setup with defaults or overrides
 quick-setup:
@@ -131,14 +147,27 @@ upgrade:
 	@docker compose up -d
 	@echo "✅ Upgrade complete"
 
+# Create backup of DICOM data and PostgreSQL database
 backup:
-	@echo "⚠️  Backup not implemented yet"
+	@chmod +x setup.sh
+	@./setup.sh --backup
+
+# Restore from backup file (requires FILE=path)
+restore:
+ifndef FILE
+	@echo "❌ Usage: make restore FILE=backups/orthanc-backup-YYYYMMDD-HHMMSS.tar.gz"
 	@echo ""
-	@echo "Manual backup:"
-	@echo "  1. Stop services: make stop"
-	@echo "  2. Copy your DICOM_STORAGE: $(DICOM_STORAGE)"
-	@echo "  3. Copy your POSTGRES_STORAGE: $(POSTGRES_STORAGE)"
-	@echo "  4. Start services: make start"
+	@echo "Available backups:"
+	@ls -la backups/*.tar.gz 2>/dev/null || echo "  No backups found in ./backups/"
+else
+	@chmod +x setup.sh
+	@./setup.sh --restore $(FILE)
+endif
+
+# List available backups
+backup-list:
+	@echo "📦 Available backups:"
+	@ls -lah backups/*.tar.gz 2>/dev/null || echo "  No backups found in ./backups/"
 
 clean:
 	@docker compose down
