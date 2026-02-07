@@ -1650,7 +1650,13 @@ EOF
         grep "^MODALITY_" "$SCRIPT_DIR/config/env.defaults" >> .env 2>/dev/null || true
     fi
 
-    chmod 600 .env
+    chmod 640 .env
+    
+    # If running as sudo, change ownership to the original user
+    if [[ -n "$SUDO_USER" ]]; then
+        chown "$SUDO_USER:$SUDO_USER" .env
+    fi
+    
     log_success ".env file created"
     
     # Store the generated password for display
@@ -1766,21 +1772,34 @@ seed_modalities() {
     # Format: MODALITY_<NAME>=<AET>|<HOST>|<PORT>
     local modality_count=0
     
-    # Source .env to get modality definitions
+    # Read modalities directly from .env file (more reliable than env vars)
+    local modality_file=""
+    
+    # Check if we can read .env
     if [[ -f ".env" ]]; then
-        set -a
-        source .env 2>/dev/null || true
-        set +a
+        if [[ -r ".env" ]]; then
+            if grep -q "^MODALITY_" .env 2>/dev/null; then
+                modality_file=".env"
+            fi
+        else
+            log_warn "Cannot read .env (permission denied). Try: sudo chown \$USER:\$USER .env"
+        fi
     fi
     
-    # Also source defaults if .env doesn't define modalities
-    if [[ -f "$SCRIPT_DIR/config/env.defaults" ]]; then
-        set -a
-        source "$SCRIPT_DIR/config/env.defaults" 2>/dev/null || true
-        set +a
+    # Fallback to defaults
+    if [[ -z "$modality_file" && -f "$SCRIPT_DIR/config/env.defaults" ]]; then
+        modality_file="$SCRIPT_DIR/config/env.defaults"
+        log_info "Using default modalities from config/env.defaults"
     fi
     
-    # Find all MODALITY_* variables
+    if [[ -z "$modality_file" ]]; then
+        log_warn "No modality configuration found in .env or config/env.defaults"
+        return 1
+    fi
+    
+    log_info "Reading modalities from $modality_file"
+    
+    # Find all MODALITY_* lines in the file
     while IFS='=' read -r var_name var_value; do
         # Extract modality name from variable (MODALITY_MERCURE -> MERCURE)
         local name="${var_name#MODALITY_}"
@@ -1812,7 +1831,7 @@ seed_modalities() {
         else
             log_warn "Failed to configure modality: $name"
         fi
-    done < <(env | grep "^MODALITY_" | sort)
+    done < <(grep "^MODALITY_" "$modality_file" | sort)
     
     if [[ $modality_count -eq 0 ]]; then
         log_warn "No modalities configured. Add MODALITY_* variables to .env"
