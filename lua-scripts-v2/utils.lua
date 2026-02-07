@@ -195,11 +195,12 @@ end
 
 -- Make an HTTP POST request
 -- Returns: success (bool), response body or error
--- NOTE: Orthanc's HttpPost only takes (url, body) - no content type argument
+-- NOTE: Orthanc's HttpPost takes (url, body, headers_table)
 function Utils.httpPost(url, body)
     local success, result = pcall(function()
         -- Orthanc's built-in HTTP function for external calls
-        return HttpPost(url, body)
+        -- Must include Content-Type header for JSON
+        return HttpPost(url, body, { ["Content-Type"] = "application/json" })
     end)
     
     return success, result
