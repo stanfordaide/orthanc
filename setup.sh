@@ -1417,39 +1417,105 @@ check_existing() {
                 ;;
             3)
                 echo
-                echo -e "${RED}╔═══════════════════════════════════════════════════════════════╗${NC}"
-                echo -e "${RED}║  🚨  DANGER: THIS WILL DELETE ALL YOUR DATA!                 ║${NC}"
-                echo -e "${RED}╚═══════════════════════════════════════════════════════════════╝${NC}"
+                echo -e "${YELLOW}╔═══════════════════════════════════════════════════════════════╗${NC}"
+                echo -e "${YELLOW}║  🔄  FRESH INSTALL - What to do with existing data?          ║${NC}"
+                echo -e "${YELLOW}╚═══════════════════════════════════════════════════════════════╝${NC}"
                 echo
                 if [[ "$has_dicom_data" == true ]]; then
-                    echo -e "  Will delete: ${RED}$dicom_size${NC} of DICOM files"
+                    echo -e "  DICOM files: ${CYAN}$dicom_size${NC} in $existing_dicom_path"
                 fi
                 if [[ "$has_db_data" == true ]]; then
-                    echo -e "  Will delete: ${RED}$db_size${NC} of database"
+                    echo -e "  Database:    ${CYAN}$db_size${NC} in $existing_db_path"
                 fi
                 echo
-                read -p "Type 'DELETE ALL DATA' to confirm: " confirm
-                if [[ "$confirm" == "DELETE ALL DATA" ]]; then
-                    log_warn "Deleting all existing data..."
-                    docker compose down -v 2>/dev/null || true
-                    [[ -n "$existing_dicom_path" ]] && rm -rf "$existing_dicom_path"/* 2>/dev/null
-                    [[ -n "$existing_db_path" ]] && rm -rf "$existing_db_path"/* 2>/dev/null
-                    rm -f .env 2>/dev/null
-                    
-                    # Clear all variables so collect_config will prompt for new values
-                    DICOM_STORAGE=""
-                    POSTGRES_STORAGE=""
-                    ORTHANC_AET=""
-                    ORTHANC_PASSWORD=""
-                    POSTGRES_PASSWORD=""
-                    USE_EXISTING=false
-                    
-                    log_success "All data deleted. Proceeding with fresh install..."
-                    return 0
-                else
-                    log_info "Cancelled. Your data is safe."
-                    exit 0
-                fi
+                echo -e "  ${GREEN}1)${NC} Archive data (backup to ./backups/, then start fresh)"
+                echo -e "  ${RED}2)${NC} Delete data (permanently remove, then start fresh)"
+                echo -e "  3) Cancel"
+                echo
+                read -p "Choice [1-3]: " data_choice
+                
+                case "$data_choice" in
+                    1)
+                        # Archive existing data
+                        local timestamp=$(date +%Y%m%d_%H%M%S)
+                        mkdir -p "$SCRIPT_DIR/backups"
+                        
+                        docker compose down 2>/dev/null || true
+                        
+                        if [[ "$has_dicom_data" == true && -n "$existing_dicom_path" ]]; then
+                            log_info "Archiving DICOM data..."
+                            local dicom_archive="$SCRIPT_DIR/backups/dicom_backup_${timestamp}.tar.gz"
+                            if sudo tar -czf "$dicom_archive" -C "$(dirname "$existing_dicom_path")" "$(basename "$existing_dicom_path")" 2>/dev/null; then
+                                log_success "Archived to: $dicom_archive"
+                                sudo rm -rf "${existing_dicom_path:?}"/* 2>/dev/null
+                            else
+                                log_error "Failed to archive DICOM data"
+                                exit 1
+                            fi
+                        fi
+                        
+                        if [[ "$has_db_data" == true && -n "$existing_db_path" ]]; then
+                            log_info "Archiving PostgreSQL data..."
+                            local db_archive="$SCRIPT_DIR/backups/postgres_backup_${timestamp}.tar.gz"
+                            if sudo tar -czf "$db_archive" -C "$(dirname "$existing_db_path")" "$(basename "$existing_db_path")" 2>/dev/null; then
+                                log_success "Archived to: $db_archive"
+                                sudo rm -rf "${existing_db_path:?}"/* 2>/dev/null
+                            else
+                                log_error "Failed to archive PostgreSQL data"
+                                exit 1
+                            fi
+                        fi
+                        
+                        rm -f .env 2>/dev/null
+                        
+                        # Clear all variables for fresh prompts
+                        DICOM_STORAGE=""
+                        POSTGRES_STORAGE=""
+                        GRAFANA_STORAGE=""
+                        ORTHANC_AET=""
+                        ORTHANC_PASSWORD=""
+                        POSTGRES_PASSWORD=""
+                        USE_EXISTING=false
+                        
+                        log_success "Data archived! Proceeding with fresh install..."
+                        echo
+                        return 0
+                        ;;
+                    2)
+                        echo
+                        echo -e "${RED}⚠️  This will PERMANENTLY DELETE:${NC}"
+                        [[ "$has_dicom_data" == true ]] && echo -e "     - $dicom_size of DICOM files"
+                        [[ "$has_db_data" == true ]] && echo -e "     - $db_size of database"
+                        echo
+                        read -p "Type 'DELETE' to confirm: " confirm
+                        if [[ "$confirm" == "DELETE" ]]; then
+                            log_warn "Deleting all existing data..."
+                            docker compose down -v 2>/dev/null || true
+                            [[ -n "$existing_dicom_path" ]] && sudo rm -rf "$existing_dicom_path"/* 2>/dev/null
+                            [[ -n "$existing_db_path" ]] && sudo rm -rf "$existing_db_path"/* 2>/dev/null
+                            rm -f .env 2>/dev/null
+                            
+                            # Clear all variables for fresh prompts
+                            DICOM_STORAGE=""
+                            POSTGRES_STORAGE=""
+                            GRAFANA_STORAGE=""
+                            ORTHANC_AET=""
+                            ORTHANC_PASSWORD=""
+                            POSTGRES_PASSWORD=""
+                            USE_EXISTING=false
+                            
+                            log_success "All data deleted. Proceeding with fresh install..."
+                            return 0
+                        else
+                            log_info "Cancelled. Your data is safe."
+                            exit 0
+                        fi
+                        ;;
+                    *)
+                        log_info "Cancelled."
+                        exit 0
+                        ;;
+                esac
                 ;;
             4|*)
                 echo "Setup cancelled."
@@ -1474,15 +1540,31 @@ collect_config() {
     if [[ "$USE_DEFAULTS" == true ]]; then
         DICOM_STORAGE="${DICOM_STORAGE:-$DEFAULT_DICOM_STORAGE}"
         POSTGRES_STORAGE="${POSTGRES_STORAGE:-$DEFAULT_POSTGRES_STORAGE}"
+        GRAFANA_STORAGE="${GRAFANA_STORAGE:-$DEFAULT_GRAFANA_STORAGE}"
         ORTHANC_AET="${ORTHANC_AET:-$DEFAULT_ORTHANC_AET}"
+        DICOM_PORT="${DICOM_PORT:-$DEFAULT_DICOM_PORT}"
+        OPERATOR_UI_PORT="${OPERATOR_UI_PORT:-$DEFAULT_OPERATOR_UI_PORT}"
+        ORTHANC_WEB_PORT="${ORTHANC_WEB_PORT:-$DEFAULT_ORTHANC_WEB_PORT}"
+        OHIF_PORT="${OHIF_PORT:-$DEFAULT_OHIF_PORT}"
+        POSTGRES_PORT="${POSTGRES_PORT:-$DEFAULT_POSTGRES_PORT}"
+        ROUTING_API_PORT="${ROUTING_API_PORT:-$DEFAULT_ROUTING_API_PORT}"
+        GRAFANA_PORT="${GRAFANA_PORT:-$DEFAULT_GRAFANA_PORT}"
+        ORTHANC_USERNAME="${ORTHANC_USERNAME:-$DEFAULT_ORTHANC_USERNAME}"
         ORTHANC_PASSWORD="${ORTHANC_PASSWORD:-$DEFAULT_ORTHANC_PASSWORD}"
+        POSTGRES_USER="${POSTGRES_USER:-$DEFAULT_POSTGRES_USER}"
         POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(generate_password)}"
+        GRAFANA_USER="${GRAFANA_USER:-$DEFAULT_GRAFANA_USER}"
+        GRAFANA_PASSWORD="${GRAFANA_PASSWORD:-$DEFAULT_GRAFANA_PASSWORD}"
+        TZ="${TZ:-$DEFAULT_TZ}"
         return
     fi
     
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SECTION 1: STORAGE PATHS (Essential)
+    # ═══════════════════════════════════════════════════════════════════════════
     echo
     echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${BLUE}  STORAGE CONFIGURATION${NC}"
+    echo -e "${BLUE}  1/4  STORAGE PATHS${NC}"
     echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
     echo
     
@@ -1501,34 +1583,144 @@ collect_config() {
         prompt "PostgreSQL data path" "$DEFAULT_POSTGRES_STORAGE" POSTGRES_STORAGE
     fi
     
+    # Grafana Storage
+    if [[ -z "$GRAFANA_STORAGE" ]]; then
+        echo
+        echo -e "${YELLOW}Where should Grafana data be stored?${NC}"
+        prompt "Grafana data path" "$DEFAULT_GRAFANA_STORAGE" GRAFANA_STORAGE
+    fi
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SECTION 2: DICOM SETTINGS
+    # ═══════════════════════════════════════════════════════════════════════════
     echo
     echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${BLUE}  DICOM CONFIGURATION${NC}"
+    echo -e "${BLUE}  2/4  DICOM SETTINGS${NC}"
     echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
     echo
     
     # AE Title
     if [[ -z "$ORTHANC_AET" ]]; then
         echo -e "${YELLOW}DICOM AE Title (Application Entity Title)${NC}"
+        echo "  This is how your PACS identifies itself to other DICOM devices"
         prompt "AE Title" "$DEFAULT_ORTHANC_AET" ORTHANC_AET
     fi
     
+    # DICOM Port
+    if [[ -z "$DICOM_PORT" ]]; then
+        echo
+        echo -e "${YELLOW}DICOM network port${NC}"
+        echo "  Standard is 4242, but change if you have conflicts"
+        prompt "DICOM port" "$DEFAULT_DICOM_PORT" DICOM_PORT
+    fi
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SECTION 3: CREDENTIALS
+    # ═══════════════════════════════════════════════════════════════════════════
     echo
     echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${BLUE}  CREDENTIALS${NC}"
+    echo -e "${BLUE}  3/4  CREDENTIALS${NC}"
     echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
     echo
     
+    # Orthanc Username
+    if [[ -z "$ORTHANC_USERNAME" ]]; then
+        echo -e "${YELLOW}Orthanc admin username${NC}"
+        prompt "Username" "$DEFAULT_ORTHANC_USERNAME" ORTHANC_USERNAME
+    fi
+    
     # Orthanc Password
     if [[ -z "$ORTHANC_PASSWORD" ]]; then
+        echo
         prompt_password "Orthanc admin password" ORTHANC_PASSWORD "$DEFAULT_ORTHANC_PASSWORD"
+    fi
+    
+    # PostgreSQL User
+    if [[ -z "$POSTGRES_USER" ]]; then
+        echo
+        echo -e "${YELLOW}PostgreSQL database user${NC}"
+        prompt "DB username" "$DEFAULT_POSTGRES_USER" POSTGRES_USER
     fi
     
     # PostgreSQL Password
     if [[ -z "$POSTGRES_PASSWORD" ]]; then
-        prompt_password "PostgreSQL password" POSTGRES_PASSWORD ""
+        echo
+        prompt_password "PostgreSQL password (auto-generate if blank)" POSTGRES_PASSWORD ""
     else
+        echo
         echo -e "  PostgreSQL password: ${GREEN}[preserved from existing database]${NC}"
+    fi
+    
+    # Grafana credentials
+    if [[ -z "$GRAFANA_USER" ]]; then
+        echo
+        echo -e "${YELLOW}Grafana admin username${NC}"
+        prompt "Grafana username" "$DEFAULT_GRAFANA_USER" GRAFANA_USER
+    fi
+    
+    if [[ -z "$GRAFANA_PASSWORD" ]]; then
+        echo
+        echo -e "${YELLOW}Grafana admin password${NC}"
+        prompt "Grafana password" "$DEFAULT_GRAFANA_PASSWORD" GRAFANA_PASSWORD
+    fi
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SECTION 4: ADVANCED (Web Ports & Timezone)
+    # ═══════════════════════════════════════════════════════════════════════════
+    echo
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}  4/4  ADVANCED SETTINGS${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+    echo
+    echo -e "  Current web port assignments (sequential from 8040):"
+    echo -e "    Dashboard:    ${CYAN}${OPERATOR_UI_PORT:-$DEFAULT_OPERATOR_UI_PORT}${NC}"
+    echo -e "    Orthanc Web:  ${CYAN}${ORTHANC_WEB_PORT:-$DEFAULT_ORTHANC_WEB_PORT}${NC}"
+    echo -e "    OHIF Viewer:  ${CYAN}${OHIF_PORT:-$DEFAULT_OHIF_PORT}${NC}"
+    echo -e "    PostgreSQL:   ${CYAN}${POSTGRES_PORT:-$DEFAULT_POSTGRES_PORT}${NC}"
+    echo -e "    Routing API:  ${CYAN}${ROUTING_API_PORT:-$DEFAULT_ROUTING_API_PORT}${NC}"
+    echo -e "    Grafana:      ${CYAN}${GRAFANA_PORT:-$DEFAULT_GRAFANA_PORT}${NC}"
+    echo
+    read -p "Change web ports? [y/N]: " change_ports
+    
+    if [[ "$change_ports" =~ ^[Yy] ]]; then
+        echo
+        echo -e "${YELLOW}Enter new base port (others will be sequential):${NC}"
+        read -p "Base port [${DEFAULT_OPERATOR_UI_PORT}]: " base_port
+        base_port="${base_port:-$DEFAULT_OPERATOR_UI_PORT}"
+        
+        OPERATOR_UI_PORT=$base_port
+        ORTHANC_WEB_PORT=$((base_port + 1))
+        OHIF_PORT=$((base_port + 2))
+        POSTGRES_PORT=$((base_port + 3))
+        ROUTING_API_PORT=$((base_port + 4))
+        GRAFANA_PORT=$((base_port + 5))
+        
+        echo -e "  New assignments:"
+        echo -e "    Dashboard:    ${GREEN}$OPERATOR_UI_PORT${NC}"
+        echo -e "    Orthanc Web:  ${GREEN}$ORTHANC_WEB_PORT${NC}"
+        echo -e "    OHIF Viewer:  ${GREEN}$OHIF_PORT${NC}"
+        echo -e "    PostgreSQL:   ${GREEN}$POSTGRES_PORT${NC}"
+        echo -e "    Routing API:  ${GREEN}$ROUTING_API_PORT${NC}"
+        echo -e "    Grafana:      ${GREEN}$GRAFANA_PORT${NC}"
+    else
+        OPERATOR_UI_PORT="${OPERATOR_UI_PORT:-$DEFAULT_OPERATOR_UI_PORT}"
+        ORTHANC_WEB_PORT="${ORTHANC_WEB_PORT:-$DEFAULT_ORTHANC_WEB_PORT}"
+        OHIF_PORT="${OHIF_PORT:-$DEFAULT_OHIF_PORT}"
+        POSTGRES_PORT="${POSTGRES_PORT:-$DEFAULT_POSTGRES_PORT}"
+        ROUTING_API_PORT="${ROUTING_API_PORT:-$DEFAULT_ROUTING_API_PORT}"
+        GRAFANA_PORT="${GRAFANA_PORT:-$DEFAULT_GRAFANA_PORT}"
+    fi
+    
+    # Timezone
+    echo
+    echo -e "  Current timezone: ${CYAN}${TZ:-$DEFAULT_TZ}${NC}"
+    read -p "Change timezone? [y/N]: " change_tz
+    
+    if [[ "$change_tz" =~ ^[Yy] ]]; then
+        echo -e "${YELLOW}Enter timezone (e.g., America/New_York, Europe/London):${NC}"
+        prompt "Timezone" "$DEFAULT_TZ" TZ
+    else
+        TZ="${TZ:-$DEFAULT_TZ}"
     fi
 }
 
@@ -1538,23 +1730,30 @@ show_summary() {
     echo -e "${BLUE}  CONFIGURATION SUMMARY${NC}"
     echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
     echo
-    echo -e "  ${CYAN}Storage${NC}"
-    echo "    DICOM:      $DICOM_STORAGE"
-    echo "    PostgreSQL: $POSTGRES_STORAGE"
+    echo -e "  ${CYAN}Storage Paths${NC}"
+    echo "    DICOM:      ${DICOM_STORAGE:-$DEFAULT_DICOM_STORAGE}"
+    echo "    PostgreSQL: ${POSTGRES_STORAGE:-$DEFAULT_POSTGRES_STORAGE}"
+    echo "    Grafana:    ${GRAFANA_STORAGE:-$DEFAULT_GRAFANA_STORAGE}"
     echo
-    echo -e "  ${CYAN}DICOM${NC}"
-    echo "    AE Title:   $ORTHANC_AET"
-    echo "    Port:       4242"
+    echo -e "  ${CYAN}DICOM Settings${NC}"
+    echo "    AE Title:   ${ORTHANC_AET:-$DEFAULT_ORTHANC_AET}"
+    echo "    Port:       ${DICOM_PORT:-$DEFAULT_DICOM_PORT}"
     echo
     echo -e "  ${CYAN}Web Ports${NC}"
-    echo "    Dashboard:  8040"
-    echo "    Orthanc:    8041"
-    echo "    OHIF:       8042"
-    echo "    PostgreSQL: 8043"
+    echo "    Dashboard:    ${OPERATOR_UI_PORT:-$DEFAULT_OPERATOR_UI_PORT}"
+    echo "    Orthanc Web:  ${ORTHANC_WEB_PORT:-$DEFAULT_ORTHANC_WEB_PORT}"
+    echo "    OHIF Viewer:  ${OHIF_PORT:-$DEFAULT_OHIF_PORT}"
+    echo "    PostgreSQL:   ${POSTGRES_PORT:-$DEFAULT_POSTGRES_PORT}"
+    echo "    Routing API:  ${ROUTING_API_PORT:-$DEFAULT_ROUTING_API_PORT}"
+    echo "    Grafana:      ${GRAFANA_PORT:-$DEFAULT_GRAFANA_PORT}"
     echo
     echo -e "  ${CYAN}Credentials${NC}"
-    echo "    Orthanc:    orthanc_admin / $ORTHANC_PASSWORD"
-    echo "    PostgreSQL: orthanc / $POSTGRES_PASSWORD"
+    echo "    Orthanc:    ${ORTHANC_USERNAME:-$DEFAULT_ORTHANC_USERNAME} / ${ORTHANC_PASSWORD:-$DEFAULT_ORTHANC_PASSWORD}"
+    echo "    PostgreSQL: ${POSTGRES_USER:-$DEFAULT_POSTGRES_USER} / ${POSTGRES_PASSWORD:-[auto-generated]}"
+    echo "    Grafana:    ${GRAFANA_USER:-$DEFAULT_GRAFANA_USER} / ${GRAFANA_PASSWORD:-$DEFAULT_GRAFANA_PASSWORD}"
+    echo
+    echo -e "  ${CYAN}Other${NC}"
+    echo "    Timezone:   ${TZ:-$DEFAULT_TZ}"
     echo
 }
 
