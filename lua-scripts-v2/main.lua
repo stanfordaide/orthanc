@@ -95,12 +95,13 @@ end
 
 --
 -- Get instance details for a study
--- Orthanc provides study info but we need to fetch instance-level tags
+-- Orthanc hierarchy: Study -> Series -> Instances
+-- We need to traverse through series to get instances
 --
 local function getInstancesWithTags(studyId)
     local instances = {}
     
-    -- Get list of instances in this study
+    -- Get study info (contains Series list, not Instances directly)
     local success, studyInfo = pcall(function()
         return ParseJson(RestApiGet("/studies/" .. studyId))
     end)
@@ -110,23 +111,38 @@ local function getInstancesWithTags(studyId)
         return instances
     end
     
-    local instanceIds = studyInfo.Instances or {}
-    Log.debug("Study has instances", { studyId = studyId, count = #instanceIds })
+    -- Get series list
+    local seriesIds = studyInfo.Series or {}
+    Log.debug("Study has series", { studyId = studyId, count = #seriesIds })
     
-    -- Get tags for each instance
-    for _, instanceId in ipairs(instanceIds) do
-        local instSuccess, instInfo = pcall(function()
-            return ParseJson(RestApiGet("/instances/" .. instanceId .. "/simplified-tags"))
+    -- For each series, get its instances
+    for _, seriesId in ipairs(seriesIds) do
+        local seriesSuccess, seriesInfo = pcall(function()
+            return ParseJson(RestApiGet("/series/" .. seriesId))
         end)
         
-        if instSuccess and instInfo then
-            instInfo.ID = instanceId  -- Add the ID to the tags
-            table.insert(instances, instInfo)
+        if seriesSuccess and seriesInfo then
+            local instanceIds = seriesInfo.Instances or {}
+            
+            -- Get tags for each instance in this series
+            for _, instanceId in ipairs(instanceIds) do
+                local instSuccess, instInfo = pcall(function()
+                    return ParseJson(RestApiGet("/instances/" .. instanceId .. "/simplified-tags"))
+                end)
+                
+                if instSuccess and instInfo then
+                    instInfo.ID = instanceId  -- Add the ID to the tags
+                    table.insert(instances, instInfo)
+                else
+                    Log.warn("Could not get instance tags", { instanceId = instanceId })
+                end
+            end
         else
-            Log.warn("Could not get instance tags", { instanceId = instanceId })
+            Log.warn("Could not get series info", { seriesId = seriesId })
         end
     end
     
+    Log.debug("Total instances found", { studyId = studyId, count = #instances })
     return instances
 end
 
