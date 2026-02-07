@@ -24,12 +24,67 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# Defaults (from your original setup)
-DEFAULT_DICOM_STORAGE="/opt/orthanc/orthanc-storage"
-DEFAULT_POSTGRES_STORAGE="/opt/orthanc/postgres-data"
-DEFAULT_ORTHANC_AET="ORTHANC_LPCH"
-DEFAULT_ORTHANC_PASSWORD="helloaide123"
-DEFAULT_POSTGRES_PASSWORD=""  # Will be generated if empty
+# ─────────────────────────────────────────────────────────────────────────────────
+# LOAD DEFAULTS FROM config/env.defaults (authoritative source of all defaults)
+# ─────────────────────────────────────────────────────────────────────────────────
+ENV_DEFAULTS_FILE="$SCRIPT_DIR/config/env.defaults"
+
+if [[ -f "$ENV_DEFAULTS_FILE" ]]; then
+    # Load the defaults file
+    set -a
+    source "$ENV_DEFAULTS_FILE" 2>/dev/null || true
+    set +a
+fi
+
+# Store as DEFAULT_* variables (these are the repo defaults)
+DEFAULT_DICOM_STORAGE="${DICOM_STORAGE:-/opt/orthanc/orthanc-storage}"
+DEFAULT_POSTGRES_STORAGE="${POSTGRES_STORAGE:-/opt/orthanc/postgres-data}"
+DEFAULT_ORTHANC_AET="${ORTHANC_AET:-ORTHANC_LPCH}"
+DEFAULT_ORTHANC_PASSWORD="${ORTHANC_PASSWORD:-helloaide123}"
+DEFAULT_POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-}"
+DEFAULT_ORTHANC_USERNAME="${ORTHANC_USERNAME:-orthanc_admin}"
+DEFAULT_POSTGRES_USER="${POSTGRES_USER:-orthanc}"
+DEFAULT_OPERATOR_UI_PORT="${OPERATOR_UI_PORT:-8040}"
+DEFAULT_ORTHANC_WEB_PORT="${ORTHANC_WEB_PORT:-8041}"
+DEFAULT_OHIF_PORT="${OHIF_PORT:-8042}"
+DEFAULT_POSTGRES_PORT="${POSTGRES_PORT:-8043}"
+DEFAULT_ROUTING_API_PORT="${ROUTING_API_PORT:-8044}"
+DEFAULT_GRAFANA_PORT="${GRAFANA_PORT:-8045}"
+DEFAULT_DICOM_PORT="${DICOM_PORT:-4242}"
+DEFAULT_TZ="${TZ:-America/Los_Angeles}"
+DEFAULT_GRAFANA_USER="${GRAFANA_USER:-admin}"
+DEFAULT_GRAFANA_PASSWORD="${GRAFANA_PASSWORD:-admin}"
+
+# Clear working variables
+unset DICOM_STORAGE POSTGRES_STORAGE ORTHANC_AET ORTHANC_PASSWORD ORTHANC_USERNAME
+unset POSTGRES_USER POSTGRES_PASSWORD OPERATOR_UI_PORT ORTHANC_WEB_PORT OHIF_PORT
+unset POSTGRES_PORT ROUTING_API_PORT GRAFANA_PORT DICOM_PORT TZ GRAFANA_USER GRAFANA_PASSWORD
+
+# ─────────────────────────────────────────────────────────────────────────────────
+# OVERLAY USER CONFIG FROM .env (if exists - this takes precedence!)
+# ─────────────────────────────────────────────────────────────────────────────────
+if [[ -f ".env" ]]; then
+    # Source user's .env to override defaults
+    set -a
+    source .env 2>/dev/null || true
+    set +a
+    
+    # Update defaults to match user's current config (for prompts)
+    DEFAULT_DICOM_STORAGE="${DICOM_STORAGE:-$DEFAULT_DICOM_STORAGE}"
+    DEFAULT_POSTGRES_STORAGE="${POSTGRES_STORAGE:-$DEFAULT_POSTGRES_STORAGE}"
+    DEFAULT_ORTHANC_AET="${ORTHANC_AET:-$DEFAULT_ORTHANC_AET}"
+    DEFAULT_ORTHANC_PASSWORD="${ORTHANC_PASSWORD:-$DEFAULT_ORTHANC_PASSWORD}"
+    DEFAULT_POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$DEFAULT_POSTGRES_PASSWORD}"
+    
+    # IMPORTANT: Preserve PostgreSQL password for existing databases
+    SAVED_POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
+    
+    # Clear working variables (but keep saved PG password)
+    unset DICOM_STORAGE POSTGRES_STORAGE ORTHANC_AET ORTHANC_PASSWORD
+    
+    # Restore PostgreSQL password (cannot change without breaking DB)
+    POSTGRES_PASSWORD="$SAVED_POSTGRES_PASSWORD"
+fi
 
 # Parsed options
 DICOM_STORAGE=""
@@ -1318,6 +1373,10 @@ check_existing() {
                 read -p "Choice [1-2]: " reconfig_choice
                 
                 if [[ "$reconfig_choice" == "2" ]]; then
+                    # IMPORTANT: Save PostgreSQL password FIRST - database was initialized with it!
+                    # Changing it would break the connection.
+                    local saved_pg_password="$POSTGRES_PASSWORD"
+                    
                     # Clear variables so collect_config prompts for new values
                     # But store old paths as defaults
                     DEFAULT_DICOM_STORAGE="${existing_dicom_path:-$DEFAULT_DICOM_STORAGE}"
@@ -1326,7 +1385,12 @@ check_existing() {
                     POSTGRES_STORAGE=""
                     ORTHANC_AET=""
                     ORTHANC_PASSWORD=""
-                    POSTGRES_PASSWORD=""
+                    
+                    # Restore PostgreSQL password (can't change without recreating database)
+                    POSTGRES_PASSWORD="$saved_pg_password"
+                    if [[ -n "$POSTGRES_PASSWORD" ]]; then
+                        log_info "Note: PostgreSQL password is preserved (required for existing database)"
+                    fi
                 else
                     # Keep existing values
                     DICOM_STORAGE="${existing_dicom_path:-$DEFAULT_DICOM_STORAGE}"
@@ -1460,6 +1524,8 @@ collect_config() {
     # PostgreSQL Password
     if [[ -z "$POSTGRES_PASSWORD" ]]; then
         prompt_password "PostgreSQL password" POSTGRES_PASSWORD ""
+    else
+        echo -e "  PostgreSQL password: ${GREEN}[preserved from existing database]${NC}"
     fi
 }
 
@@ -1492,57 +1558,104 @@ show_summary() {
 create_env_file() {
     log_info "Creating .env file..."
     
+    # Use configured values or defaults
+    local env_dicom="${DICOM_STORAGE:-$DEFAULT_DICOM_STORAGE}"
+    local env_postgres="${POSTGRES_STORAGE:-$DEFAULT_POSTGRES_STORAGE}"
+    local env_aet="${ORTHANC_AET:-$DEFAULT_ORTHANC_AET}"
+    local env_orthanc_pass="${ORTHANC_PASSWORD:-$DEFAULT_ORTHANC_PASSWORD}"
+    local env_pg_pass="${POSTGRES_PASSWORD:-$DEFAULT_POSTGRES_PASSWORD}"
+    local env_tz="${TZ:-$DEFAULT_TZ}"
+    
+    # Generate PostgreSQL password if not set
+    if [[ -z "$env_pg_pass" ]]; then
+        env_pg_pass=$(generate_password)
+        log_info "Generated PostgreSQL password"
+    fi
+    
     cat > .env << EOF
 # ═══════════════════════════════════════════════════════════════════════════════
-# ORTHANC CONFIGURATION
-# Generated by setup.sh on $(date)
+# ORTHANC PACS CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
-
-# ─────────────────────────────────────────────────────────────────────────────────
-# CREDENTIALS
-# ─────────────────────────────────────────────────────────────────────────────────
-ORTHANC_USERNAME=orthanc_admin
-ORTHANC_PASSWORD=$ORTHANC_PASSWORD
-
-POSTGRES_USER=orthanc
-POSTGRES_PASSWORD=$POSTGRES_PASSWORD
-
-# ─────────────────────────────────────────────────────────────────────────────────
-# WEB PORTS
-# ─────────────────────────────────────────────────────────────────────────────────
-OPERATOR_UI_PORT=8040
-ORTHANC_WEB_PORT=8041
-OHIF_PORT=8042
-POSTGRES_PORT=8043
-ROUTING_API_PORT=8044
-GRAFANA_PORT=8045
-
-# ─────────────────────────────────────────────────────────────────────────────────
-# GRAFANA CREDENTIALS
-# ─────────────────────────────────────────────────────────────────────────────────
-GRAFANA_USER=admin
-GRAFANA_PASSWORD=admin
-
-# ─────────────────────────────────────────────────────────────────────────────────
-# DICOM SETTINGS
-# ─────────────────────────────────────────────────────────────────────────────────
-ORTHANC_AET=$ORTHANC_AET
-DICOM_PORT=4242
+# Generated by setup.sh on $(date)
+# 
+# For all available options, see: config/env.defaults
+# ═══════════════════════════════════════════════════════════════════════════════
 
 # ─────────────────────────────────────────────────────────────────────────────────
 # STORAGE PATHS
 # ─────────────────────────────────────────────────────────────────────────────────
-DICOM_STORAGE=$DICOM_STORAGE
-POSTGRES_STORAGE=$POSTGRES_STORAGE
+DICOM_STORAGE=$env_dicom
+POSTGRES_STORAGE=$env_postgres
+
+# ─────────────────────────────────────────────────────────────────────────────────
+# DICOM SETTINGS
+# ─────────────────────────────────────────────────────────────────────────────────
+ORTHANC_AET=$env_aet
+DICOM_PORT=${DICOM_PORT:-$DEFAULT_DICOM_PORT}
+
+# ─────────────────────────────────────────────────────────────────────────────────
+# WEB PORTS
+# ─────────────────────────────────────────────────────────────────────────────────
+OPERATOR_UI_PORT=${OPERATOR_UI_PORT:-$DEFAULT_OPERATOR_UI_PORT}
+ORTHANC_WEB_PORT=${ORTHANC_WEB_PORT:-$DEFAULT_ORTHANC_WEB_PORT}
+OHIF_PORT=${OHIF_PORT:-$DEFAULT_OHIF_PORT}
+POSTGRES_PORT=${POSTGRES_PORT:-$DEFAULT_POSTGRES_PORT}
+ROUTING_API_PORT=${ROUTING_API_PORT:-$DEFAULT_ROUTING_API_PORT}
+GRAFANA_PORT=${GRAFANA_PORT:-$DEFAULT_GRAFANA_PORT}
+
+# ─────────────────────────────────────────────────────────────────────────────────
+# ORTHANC CREDENTIALS
+# ─────────────────────────────────────────────────────────────────────────────────
+ORTHANC_USERNAME=${ORTHANC_USERNAME:-$DEFAULT_ORTHANC_USERNAME}
+ORTHANC_PASSWORD=$env_orthanc_pass
+
+# ─────────────────────────────────────────────────────────────────────────────────
+# POSTGRESQL CREDENTIALS
+# ⚠️  WARNING: Do not change POSTGRES_PASSWORD after initial setup!
+# ─────────────────────────────────────────────────────────────────────────────────
+POSTGRES_USER=${POSTGRES_USER:-$DEFAULT_POSTGRES_USER}
+POSTGRES_PASSWORD=$env_pg_pass
+
+# ─────────────────────────────────────────────────────────────────────────────────
+# GRAFANA CREDENTIALS
+# ─────────────────────────────────────────────────────────────────────────────────
+GRAFANA_USER=${GRAFANA_USER:-$DEFAULT_GRAFANA_USER}
+GRAFANA_PASSWORD=${GRAFANA_PASSWORD:-$DEFAULT_GRAFANA_PASSWORD}
 
 # ─────────────────────────────────────────────────────────────────────────────────
 # TIMEZONE
 # ─────────────────────────────────────────────────────────────────────────────────
-TZ=America/Los_Angeles
+TZ=$env_tz
+
+# ─────────────────────────────────────────────────────────────────────────────────
+# DICOM MODALITIES
+# ─────────────────────────────────────────────────────────────────────────────────
+# Format: MODALITY_<NAME>=<AET>|<HOST>|<PORT>
+# Modify these to match your network configuration.
+# Run 'make seed-modalities' after changes.
+
 EOF
+
+    # Append modality definitions from defaults or existing env
+    local modalities_added=0
+    
+    # First check if we have existing modalities in environment
+    while IFS='=' read -r var_name var_value; do
+        echo "$var_name=$var_value" >> .env
+        ((modalities_added++))
+    done < <(env | grep "^MODALITY_" | sort)
+    
+    # If no modalities found, copy from defaults
+    if [[ $modalities_added -eq 0 && -f "$SCRIPT_DIR/config/env.defaults" ]]; then
+        grep "^MODALITY_" "$SCRIPT_DIR/config/env.defaults" >> .env 2>/dev/null || true
+    fi
 
     chmod 600 .env
     log_success ".env file created"
+    
+    # Store the generated password for display
+    POSTGRES_PASSWORD="$env_pg_pass"
+    ORTHANC_PASSWORD="$env_orthanc_pass"
 }
 
 update_orthanc_json() {
@@ -1635,7 +1748,7 @@ start_services() {
 }
 
 seed_modalities() {
-    log_info "Configuring default DICOM modalities..."
+    log_info "Configuring DICOM modalities from .env..."
     
     local port="${ORTHANC_WEB_PORT:-8041}"
     local orthanc_url="http://localhost:$port"
@@ -1649,22 +1762,44 @@ seed_modalities() {
     local existing=$(curl -s -u "$auth" "$orthanc_url/modalities" 2>/dev/null)
     log_info "Current modalities: $existing"
     
-    # Define default modalities (from your original config)
-    # Format: NAME|AET|HOST|PORT
-    local modalities=(
-        "MERCURE|orthanc|172.17.0.1|11112"
-        "LPCHROUTER|LPCHROUTER|10.50.133.21|4000"
-        "LPCHTROUTER|LPCHTROUTER|10.50.130.114|4000"
-        "MODLINK|PSRTBONEAPP01|10.251.201.59|104"
-    )
+    # Read modalities from environment variables (MODALITY_*)
+    # Format: MODALITY_<NAME>=<AET>|<HOST>|<PORT>
+    local modality_count=0
     
-    for modality in "${modalities[@]}"; do
-        IFS='|' read -r name aet host port <<< "$modality"
+    # Source .env to get modality definitions
+    if [[ -f ".env" ]]; then
+        set -a
+        source .env 2>/dev/null || true
+        set +a
+    fi
+    
+    # Also source defaults if .env doesn't define modalities
+    if [[ -f "$SCRIPT_DIR/config/env.defaults" ]]; then
+        set -a
+        source "$SCRIPT_DIR/config/env.defaults" 2>/dev/null || true
+        set +a
+    fi
+    
+    # Find all MODALITY_* variables
+    while IFS='=' read -r var_name var_value; do
+        # Extract modality name from variable (MODALITY_MERCURE -> MERCURE)
+        local name="${var_name#MODALITY_}"
         
-        # Check if this modality already exists
-        if echo "$existing" | grep -q "\"$name\""; then
-            log_info "Modality $name already exists, skipping"
+        # Skip empty values
+        [[ -z "$var_value" ]] && continue
+        
+        # Parse the value: AET|HOST|PORT
+        IFS='|' read -r aet host port <<< "$var_value"
+        
+        # Validate
+        if [[ -z "$aet" || -z "$host" || -z "$port" ]]; then
+            log_warn "Invalid modality format for $name: $var_value (expected AET|HOST|PORT)"
             continue
+        fi
+        
+        # Check if this modality already exists with same config
+        if echo "$existing" | grep -q "\"$name\""; then
+            log_info "Modality $name already exists, updating..."
         fi
         
         local config="{\"AET\":\"$aet\",\"Host\":\"$host\",\"Port\":$port,\"AllowEcho\":true,\"AllowStore\":true}"
@@ -1672,11 +1807,19 @@ seed_modalities() {
         if curl -s -u "$auth" -X PUT "$orthanc_url/modalities/$name" \
             -H "Content-Type: application/json" \
             -d "$config" &>/dev/null; then
-            log_success "Added modality: $name ($aet @ $host:$port)"
+            log_success "Configured modality: $name ($aet @ $host:$port)"
+            ((modality_count++))
         else
-            log_warn "Failed to add modality: $name"
+            log_warn "Failed to configure modality: $name"
         fi
-    done
+    done < <(env | grep "^MODALITY_" | sort)
+    
+    if [[ $modality_count -eq 0 ]]; then
+        log_warn "No modalities configured. Add MODALITY_* variables to .env"
+        log_info "Example: MODALITY_WORKSTATION=WORKSTATION1|192.168.1.100|4242"
+    else
+        log_success "Configured $modality_count modalities"
+    fi
 }
 
 print_completion() {

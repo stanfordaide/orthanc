@@ -1,6 +1,6 @@
 # 🏥 Orthanc PACS
 
-A containerized PACS (Picture Archiving and Communication System) with an operator-friendly dashboard.
+A containerized PACS (Picture Archiving and Communication System) with an operator-friendly dashboard, workflow tracking, and QI dashboards.
 
 ## Quick Start
 
@@ -12,10 +12,7 @@ cd orthanc
 # 2. Run setup (interactive wizard)
 make setup
 
-# 3. Start services
-make start
-
-# 4. Open dashboard
+# 3. Open dashboard
 open http://localhost:8040
 ```
 
@@ -41,27 +38,20 @@ make quick-setup
 
 Uses default paths: `/opt/orthanc/orthanc-storage` and `/opt/orthanc/postgres-data`
 
-### Custom Storage Paths
+### Custom Configuration
 
-Override paths during setup:
+All settings can be configured in `.env`. Start from the defaults template:
 
 ```bash
-# NAS storage for DICOM
-make setup DICOM_STORAGE=/mnt/nas/orthanc/dicom
+# Copy defaults
+cp config/env.defaults .env
 
-# Both paths customized
-make setup DICOM_STORAGE=/data/dicom POSTGRES_STORAGE=/data/postgres
+# Edit to customize
+nano .env
 
-# Or via the setup script directly
-./setup.sh --dicom /mnt/nas/dicom --db /data/postgres --aet MY_PACS
+# Apply configuration
+make setup
 ```
-
-### Re-running Setup
-
-It's safe to run `make setup` again on an existing installation. You'll be prompted to:
-1. Update configuration (keeps existing data)
-2. Keep existing configuration (just verify/start)
-3. Cancel
 
 ## Ports
 
@@ -71,27 +61,92 @@ It's safe to run `make setup` again on an existing installation. You'll be promp
 | **8041** | Orthanc | PACS Web UI & REST API |
 | **8042** | OHIF Viewer | Clinical image viewer |
 | **8043** | PostgreSQL | Database (for tools) |
+| **8044** | Routing API | Workflow tracking API |
+| **8045** | Grafana | QI Dashboards |
 | **4242** | DICOM | DICOM protocol |
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      YOUR BROWSER                           │
-│                                                             │
-│   localhost:8040    localhost:8041    localhost:8042        │
-│        │                 │                 │                │
-└────────┼─────────────────┼─────────────────┼────────────────┘
-         │                 │                 │
-         ▼                 ▼                 ▼
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│  Operator   │    │   Orthanc   │    │    OHIF     │
-│  Dashboard  │───▶│    PACS     │◀───│   Viewer    │
-└─────────────┘    └──────┬──────┘    └─────────────┘
-                          │
-                   ┌──────┴──────┐
-                   │  PostgreSQL │
-                   └─────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                           YOUR BROWSER                               │
+│                                                                     │
+│   :8040         :8041         :8042         :8045                   │
+│     │             │             │             │                     │
+└─────┼─────────────┼─────────────┼─────────────┼─────────────────────┘
+      │             │             │             │
+      ▼             ▼             ▼             ▼
+┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
+│ Operator │  │ Orthanc  │  │   OHIF   │  │ Grafana  │
+│Dashboard │─▶│   PACS   │◀─│  Viewer  │  │    QI    │
+└──────────┘  └────┬─────┘  └──────────┘  └────┬─────┘
+                   │                           │
+            ┌──────┴──────┐                    │
+            │  PostgreSQL │◀───────────────────┘
+            └─────────────┘
+```
+
+## Configuration
+
+All settings are in `.env`. The file `config/env.defaults` contains all available options with documentation.
+
+### Storage Paths
+
+```bash
+DICOM_STORAGE=/opt/orthanc/orthanc-storage
+POSTGRES_STORAGE=/opt/orthanc/postgres-data
+```
+
+### DICOM Settings
+
+```bash
+ORTHANC_AET=ORTHANC_LPCH
+DICOM_PORT=4242
+```
+
+### Credentials
+
+```bash
+ORTHANC_USERNAME=orthanc_admin
+ORTHANC_PASSWORD=helloaide123
+
+POSTGRES_USER=orthanc
+POSTGRES_PASSWORD=<generated>
+
+GRAFANA_USER=admin
+GRAFANA_PASSWORD=admin
+```
+
+### DICOM Modalities
+
+Define remote PACS/devices directly in `.env`:
+
+```bash
+# Format: MODALITY_<NAME>=<AET>|<HOST>|<PORT>
+MODALITY_MERCURE=orthanc|172.17.0.1|11112
+MODALITY_LPCHROUTER=LPCHROUTER|10.50.133.21|4000
+MODALITY_LPCHTROUTER=LPCHTROUTER|10.50.130.114|4000
+MODALITY_MODLINK=PSRTBONEAPP01|10.251.201.59|104
+
+# Add your own:
+MODALITY_WORKSTATION=WORKSTATION1|192.168.1.100|4242
+```
+
+After editing modalities, apply changes:
+
+```bash
+make seed-modalities
+```
+
+### Web Ports
+
+```bash
+OPERATOR_UI_PORT=8040
+ORTHANC_WEB_PORT=8041
+OHIF_PORT=8042
+POSTGRES_PORT=8043
+ROUTING_API_PORT=8044
+GRAFANA_PORT=8045
 ```
 
 ## Commands
@@ -102,7 +157,7 @@ It's safe to run `make setup` again on an existing installation. You'll be promp
 |---------|-------------|
 | `make setup` | Interactive setup wizard (safe to re-run) |
 | `make quick-setup` | Quick setup with defaults |
-| `make setup DICOM_STORAGE=/path` | Setup with custom paths |
+| `make menu` | Full interactive menu |
 
 ### Service Management
 
@@ -113,6 +168,21 @@ It's safe to run `make setup` again on an existing installation. You'll be promp
 | `make restart` | Restart all services |
 | `make logs` | View logs (Ctrl+C to exit) |
 | `make status` | System status |
+
+### Configuration
+
+| Command | Description |
+|---------|-------------|
+| `make seed-modalities` | Apply modality changes from .env |
+| `make rebuild` | Rebuild all Docker images |
+
+### Backup & Restore
+
+| Command | Description |
+|---------|-------------|
+| `make backup` | Create backup of all data |
+| `make backup-list` | List available backups |
+| `make restore FILE=<path>` | Restore from backup |
 
 ### Maintenance
 
@@ -138,18 +208,27 @@ It's safe to run `make setup` again on an existing installation. You'll be promp
 
 ## Managing DICOM Destinations
 
-### Via the Web UI (Recommended)
+### Via .env (Recommended for Initial Setup)
+
+Edit `.env` and add/modify modalities:
+
+```bash
+# Format: MODALITY_<NAME>=<AET>|<HOST>|<PORT>
+MODALITY_NEWPACS=NEWPACS_AET|192.168.1.50|4242
+```
+
+Apply changes:
+
+```bash
+make seed-modalities
+```
+
+### Via the Web UI
 
 1. Open the Operator Dashboard: http://localhost:8040
 2. In the "DICOM Destinations" section, click **+ Add**
-3. Fill in:
-   - **Name**: Unique identifier (e.g., `MY_PACS`)
-   - **AE Title**: The destination's AE Title
-   - **Host**: IP address or hostname
-   - **Port**: DICOM port (usually 104 or 4242)
+3. Fill in Name, AE Title, Host, Port
 4. Click **Add** to save
-
-To edit or delete: hover over a destination and click **Edit**
 
 Changes take effect immediately—no restart required.
 
@@ -165,63 +244,51 @@ curl -X PUT http://localhost:8041/modalities/MY_PACS \
 # Test connectivity
 curl -X POST http://localhost:8041/modalities/MY_PACS/echo \
   -u orthanc_admin:YOUR_PASSWORD
-
-# Delete a destination
-curl -X DELETE http://localhost:8041/modalities/MY_PACS \
-  -u orthanc_admin:YOUR_PASSWORD
 ```
 
-## Configuration
+## Workflow Tracking
 
-All settings are in `.env` (created by `make setup`):
+The system tracks studies through the processing pipeline:
+
+1. **Study Received** - DICOM arrives at Orthanc
+2. **Sent to MERCURE** - Forwarded to AI processing
+3. **AI Results Back** - Results returned from MERCURE
+4. **Routed to Destinations** - Final delivery to PACS
+
+View workflow status in the Operator Dashboard or Grafana QI dashboards.
+
+## Backup & Restore
+
+### Create a Backup
 
 ```bash
-# Storage paths
-DICOM_STORAGE=/opt/orthanc/orthanc-storage
-POSTGRES_STORAGE=/opt/orthanc/postgres-data
-
-# DICOM settings
-ORTHANC_AET=ORTHANC_LPCH
-DICOM_PORT=4242
-
-# Web ports
-OPERATOR_UI_PORT=8040
-ORTHANC_WEB_PORT=8041
-OHIF_PORT=8042
-POSTGRES_PORT=8043
-
-# Credentials
-ORTHANC_USERNAME=orthanc_admin
-ORTHANC_PASSWORD=helloaide123
-POSTGRES_PASSWORD=<generated>
-
-# Timezone
-TZ=America/Los_Angeles
+make backup
+# or with a specific filename
+./setup.sh --backup my-backup.tar.gz
 ```
 
-To change configuration after setup:
-1. Edit `.env`
-2. Run `make restart`
+Backups include:
+- DICOM storage
+- PostgreSQL database
+- Configuration files (.env, orthanc.json)
 
-## Uninstall
-
-To completely remove Orthanc including all data:
+### Restore from Backup
 
 ```bash
-make uninstall
+make restore FILE=backups/orthanc-backup-2026-02-06.tar.gz
 ```
 
-This will:
-- Stop and remove all Docker containers
-- Delete the `.env` configuration
-- Delete DICOM storage directory
-- Delete PostgreSQL data directory
+### Migrate to New Storage Location
 
-**You must type "yes" to confirm.**
-
-To just remove containers but keep data:
 ```bash
-make clean
+# 1. Create backup
+make backup
+
+# 2. Edit .env with new paths
+nano .env
+
+# 3. Run setup to apply
+make setup
 ```
 
 ## File Structure
@@ -235,23 +302,29 @@ orthanc/
 ├── Makefile                # Common operations
 │
 ├── config/
+│   ├── env.defaults        # All configuration options (reference)
 │   ├── orthanc.json        # Orthanc settings
-│   ├── nginx.conf          # OHIF proxy
-│   └── env.template        # Config template
+│   └── nginx.conf          # OHIF proxy
 │
 ├── ui/
 │   ├── index.html          # Operator dashboard
 │   └── nginx.conf          # Dashboard proxy
 │
+├── api/
+│   ├── app.py              # Routing API
+│   └── Dockerfile          # API container
+│
 ├── lua-scripts/
 │   └── *.lua               # Routing logic
 │
-├── init/
-│   └── 001_routing_state.sql  # DB schema
+├── grafana/
+│   ├── provisioning/       # Datasource config
+│   └── dashboards/         # QI dashboard definitions
 │
-└── data/                   # Persistent data (if using local paths)
-    ├── dicom/              # DICOM files
-    └── postgres/           # Database
+├── init/
+│   └── *.sql               # Database schema
+│
+└── backups/                # Backup files
 ```
 
 ## Troubleshooting
@@ -299,6 +372,18 @@ sudo chown -R 1000:1000 /path/to/dicom/storage
 sudo chown -R 999:999 /path/to/postgres/storage
 ```
 
+### Disk space issues
+
+```bash
+# Check disk usage
+df -h
+
+# If root disk is full, migrate to another location:
+make backup
+# Edit .env with new DICOM_STORAGE and POSTGRES_STORAGE paths
+make restore FILE=backups/latest.tar.gz
+```
+
 ### Reset everything and start fresh
 
 ```bash
@@ -311,16 +396,25 @@ make uninstall
 make setup
 ```
 
-## Pre-configured DICOM Destinations
+## SSH Port Forwarding
 
-Your original modalities (can be managed via UI):
+To access services from a remote machine:
 
-| Name | AE Title | Host | Port |
-|------|----------|------|------|
-| MERCURE | orthanc | 172.17.0.1 | 11112 |
-| LPCHROUTER | LPCHROUTER | 10.50.133.21 | 4000 |
-| LPCHTROUTER | LPCHTROUTER | 10.50.130.114 | 4000 |
-| MODLINK | PSRTBONEAPP01 | 10.251.201.59 | 104 |
+```bash
+ssh -L 9040:localhost:8040 \
+    -L 9041:localhost:8041 \
+    -L 9042:localhost:8042 \
+    -L 9043:localhost:8043 \
+    -L 9044:localhost:8044 \
+    -L 9045:localhost:8045 \
+    user@server
+```
+
+Then access:
+- Dashboard: http://localhost:9040
+- Orthanc: http://localhost:9041
+- OHIF: http://localhost:9042
+- Grafana: http://localhost:9045
 
 ## License
 
