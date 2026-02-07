@@ -83,8 +83,11 @@ Config.DESTINATIONS = {
 
 Config.MATCHING = {
     -- Studies that should go through AI pipeline
+    -- Note: Include both space and underscore versions for flexibility
     BONE_LENGTH_PATTERNS = {
-        "*EXTREMITY BILATERAL BONE LENGTH*",           -- "Study description", "LEG LENGTH STUDY"
+        "EXTREMITY BILATERAL BONE LENGTH",    -- With spaces
+        "EXTREMITY_BILATERAL_BONE_LENGTH",    -- With underscores (LPCH format)
+        "BONE LENGTH",                        -- Shorter fallback
     },
     
     -- Pattern to identify AI results coming back from MERCURE
