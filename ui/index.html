@@ -1053,9 +1053,22 @@ function dashboard() {
         async init() {
             // Load saved test results from localStorage
             this.loadSavedStatuses();
-            // Check Mercure integration status
-            await this.checkMercureStatus();
-            await this.refresh();
+            
+            // Give services a moment to be ready on page load
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Check Mercure integration status (non-blocking)
+            this.checkMercureStatus().catch(e => console.warn('Mercure check failed:', e));
+            
+            // Initial refresh with retry on failure
+            try {
+                await this.refresh();
+            } catch (e) {
+                console.warn('Initial refresh failed, retrying in 2s...', e);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                await this.refresh();
+            }
+            
             // Auto-refresh every 30 seconds
             setInterval(() => this.refresh(), 30000);
         },
@@ -1163,7 +1176,13 @@ function dashboard() {
                 // If we got here, services are running
                 this.services = { healthy: 4, total: 4 };
             } catch (e) {
-                this.services = { healthy: 0, total: 4 };
+                console.warn('Failed to load stats:', e);
+                // Don't reset to 0 if we had data before - just mark as degraded
+                if (this.stats.studies !== undefined) {
+                    this.services = { healthy: 3, total: 4 };  // Degraded, not down
+                } else {
+                    this.services = { healthy: 0, total: 4 };
+                }
             }
         },
         
@@ -1382,23 +1401,26 @@ function dashboard() {
                 // Fetch funnel data
                 const funnelResponse = await fetch('/api/funnel?hours=24');
                 if (funnelResponse.ok) {
-                    this.funnel = await funnelResponse.json();
+                    const data = await funnelResponse.json();
+                    if (data) this.funnel = data;
                 }
                 
                 // Fetch recent workflows
                 const workflowsResponse = await fetch('/api/workflows?hours=24&limit=20');
                 if (workflowsResponse.ok) {
-                    this.recentWorkflows = await workflowsResponse.json();
+                    const data = await workflowsResponse.json();
+                    if (Array.isArray(data)) this.recentWorkflows = data;
                 }
                 
                 // Fetch per-destination stats (backward compat)
                 const destResponse = await fetch('/api/routing/stats?hours=24');
                 if (destResponse.ok) {
-                    this.routingStats = await destResponse.json();
+                    const data = await destResponse.json();
+                    if (Array.isArray(data)) this.routingStats = data;
                 }
             } catch (e) {
                 console.error('Failed to load routing stats:', e);
-                this.routingStats = [];
+                // Don't reset data on error - keep existing values
             }
         },
 

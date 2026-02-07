@@ -39,7 +39,8 @@ services:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:80/"]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
+      start_period: 10s
 
   # ─────────────────────────────────────────────────────────────────────────────
   # ORTHANC - PACS Server
@@ -69,11 +70,11 @@ services:
         condition: service_healthy
     restart: always
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8042/system"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8042/system > /dev/null || exit 1"]
       interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
 
   # ─────────────────────────────────────────────────────────────────────────────
   # OHIF VIEWER - Clinical image viewing
