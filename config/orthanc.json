@@ -6,7 +6,7 @@
     "MaximumPatientCount" : 0,
     "ConcurrentJobs" : 2,
   
-    "LuaScripts" : ["/etc/orthanc/lua/autosend_leg_length.lua"],
+    "LuaScripts" : ["/etc/orthanc/lua-v2/main.lua"],
     "Plugins" : [ 
       "/usr/share/orthanc/plugins", 
       "/usr/local/share/orthanc/plugins"

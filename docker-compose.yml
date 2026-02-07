@@ -54,7 +54,9 @@ services:
       - "${ORTHANC_WEB_PORT:-8041}:8042"
       - "${DICOM_PORT:-4242}:4242"
     volumes:
-      # Mount Lua scripts - supports both old location and new
+      # Mount Lua scripts (v2 - modular)
+      - ./lua-scripts-v2:/etc/orthanc/lua-v2:ro
+      # Keep old scripts available for rollback
       - ./lua-scripts:/etc/orthanc/lua:ro
       - orthanc-storage:/var/lib/orthanc/db
     environment:
