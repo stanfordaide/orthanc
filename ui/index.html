@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Orthanc Operator Dashboard</title>
+    <title>RADWATCH Operator Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
@@ -54,14 +54,35 @@
 
 <div x-data="dashboard()" x-init="init()" class="min-h-screen">
     
-    <!-- Header -->
-    <header class="bg-midnight-800 border-b border-midnight-600 sticky top-0 z-50">
+    <!-- Top Navigation Bar -->
+    <nav class="bg-midnight-900 border-b border-midnight-700 sticky top-0 z-50">
+        <div class="container mx-auto px-6">
+            <div class="flex justify-between items-center h-10">
+                <div class="flex items-center gap-6">
+                    <span class="font-bold text-sm tracking-widest text-neon-blue">RADWATCH</span>
+                    <div class="h-4 w-px bg-midnight-600"></div>
+                    <div class="flex items-center gap-4 text-xs">
+                        <a href="#" class="text-slate-300 hover:text-white transition-colors font-medium">Dashboard</a>
+                        <a href="#" @click.prevent="showAbout = true" class="text-slate-500 hover:text-slate-300 transition-colors">About</a>
+                    </div>
+                </div>
+                <div class="flex items-center gap-4 text-xs text-slate-500">
+                    <a :href="orthancWebUrl" target="_blank" class="hover:text-slate-300 transition-colors">Orthanc UI →</a>
+                    <a :href="ohifUrl" target="_blank" class="hover:text-slate-300 transition-colors">OHIF Viewer →</a>
+                    <a :href="grafanaUrl" target="_blank" class="hover:text-slate-300 transition-colors">Grafana →</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Header -->
+    <header class="bg-midnight-800 border-b border-midnight-600">
         <div class="container mx-auto px-6 py-4">
             <div class="flex justify-between items-center">
                 <div class="flex items-center gap-4">
-                    <div class="text-4xl">🏥</div>
+                    <div class="text-4xl">📡</div>
                     <div>
-                        <h1 class="text-xl font-bold tracking-tight">ORTHANC</h1>
+                        <h1 class="text-xl font-bold tracking-tight">RADWATCH</h1>
                         <p class="text-xs text-slate-500 font-mono">OPERATOR DASHBOARD</p>
                     </div>
                 </div>
@@ -81,6 +102,48 @@
             </div>
         </div>
     </header>
+
+    <!-- About Modal -->
+    <div x-show="showAbout" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" @keydown.escape.window="showAbout = false">
+        <div class="absolute inset-0 bg-black/70" @click="showAbout = false"></div>
+        <div class="relative bg-midnight-800 border border-midnight-600 rounded-xl max-w-lg w-full p-6 shadow-2xl">
+            <button @click="showAbout = false" class="absolute top-4 right-4 text-slate-500 hover:text-white">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+            
+            <div class="flex items-center gap-3 mb-4">
+                <span class="text-3xl">📡</span>
+                <div>
+                    <h2 class="text-xl font-bold">RADWATCH</h2>
+                    <p class="text-xs text-slate-500">Operator Dashboard</p>
+                </div>
+            </div>
+            
+            <div class="space-y-4 text-sm text-slate-300">
+                <p>
+                    RADWATCH is a monitoring and management interface for the Orthanc PACS system,
+                    designed to provide operators with real-time visibility into DICOM routing workflows.
+                </p>
+                
+                <div class="bg-midnight-700 rounded-lg p-4">
+                    <h3 class="font-semibold text-white mb-2">Features</h3>
+                    <ul class="space-y-1 text-slate-400">
+                        <li>• Real-time service health monitoring</li>
+                        <li>• DICOM destination management & testing</li>
+                        <li>• Study workflow tracking & visualization</li>
+                        <li>• Pipeline analytics & QI dashboards</li>
+                    </ul>
+                </div>
+                
+                <div class="flex items-center justify-between pt-4 border-t border-midnight-600 text-xs text-slate-500">
+                    <span>Stanford AIDE Lab</span>
+                    <span class="font-mono">v1.0.0</span>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <main class="container mx-auto px-6 py-8">
         
@@ -817,8 +880,9 @@ function dashboard() {
         // Config - adjust based on your setup
         // These can be overridden via window.ORTHANC_CONFIG
         orthancUrl: '/orthanc',  // Proxied through nginx
-        orthancWebUrl: 'http://' + window.location.hostname + ':8041',
-        ohifUrl: 'http://' + window.location.hostname + ':8042',
+        orthancWebUrl: 'http://' + window.location.hostname + ':' + (parseInt(window.location.port) + 1 || 8041),
+        ohifUrl: 'http://' + window.location.hostname + ':' + (parseInt(window.location.port) + 2 || 8042),
+        grafanaUrl: 'http://' + window.location.hostname + ':' + (parseInt(window.location.port) + 5 || 8045),
         
         // State
         loading: false,
@@ -837,6 +901,7 @@ function dashboard() {
         searchQuery: '',
         selectedStudy: null,
         showStuckModal: false,
+        showAbout: false,
         toasts: [],
         
         // Destination management
