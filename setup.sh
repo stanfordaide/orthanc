@@ -39,6 +39,7 @@ fi
 # Store as DEFAULT_* variables (these are the repo defaults)
 DEFAULT_DICOM_STORAGE="${DICOM_STORAGE:-/opt/orthanc/orthanc-storage}"
 DEFAULT_POSTGRES_STORAGE="${POSTGRES_STORAGE:-/opt/orthanc/postgres-data}"
+DEFAULT_GRAFANA_STORAGE="${GRAFANA_STORAGE:-/opt/orthanc/grafana-data}"
 DEFAULT_ORTHANC_AET="${ORTHANC_AET:-ORTHANC_LPCH}"
 DEFAULT_ORTHANC_PASSWORD="${ORTHANC_PASSWORD:-helloaide123}"
 DEFAULT_POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-}"
@@ -56,7 +57,7 @@ DEFAULT_GRAFANA_USER="${GRAFANA_USER:-admin}"
 DEFAULT_GRAFANA_PASSWORD="${GRAFANA_PASSWORD:-admin}"
 
 # Clear working variables
-unset DICOM_STORAGE POSTGRES_STORAGE ORTHANC_AET ORTHANC_PASSWORD ORTHANC_USERNAME
+unset DICOM_STORAGE POSTGRES_STORAGE GRAFANA_STORAGE ORTHANC_AET ORTHANC_PASSWORD ORTHANC_USERNAME
 unset POSTGRES_USER POSTGRES_PASSWORD OPERATOR_UI_PORT ORTHANC_WEB_PORT OHIF_PORT
 unset POSTGRES_PORT ROUTING_API_PORT GRAFANA_PORT DICOM_PORT TZ GRAFANA_USER GRAFANA_PASSWORD
 
@@ -72,6 +73,7 @@ if [[ -f ".env" ]]; then
     # Update defaults to match user's current config (for prompts)
     DEFAULT_DICOM_STORAGE="${DICOM_STORAGE:-$DEFAULT_DICOM_STORAGE}"
     DEFAULT_POSTGRES_STORAGE="${POSTGRES_STORAGE:-$DEFAULT_POSTGRES_STORAGE}"
+    DEFAULT_GRAFANA_STORAGE="${GRAFANA_STORAGE:-$DEFAULT_GRAFANA_STORAGE}"
     DEFAULT_ORTHANC_AET="${ORTHANC_AET:-$DEFAULT_ORTHANC_AET}"
     DEFAULT_ORTHANC_PASSWORD="${ORTHANC_PASSWORD:-$DEFAULT_ORTHANC_PASSWORD}"
     DEFAULT_POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$DEFAULT_POSTGRES_PASSWORD}"
@@ -80,7 +82,7 @@ if [[ -f ".env" ]]; then
     SAVED_POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
     
     # Clear working variables (but keep saved PG password)
-    unset DICOM_STORAGE POSTGRES_STORAGE ORTHANC_AET ORTHANC_PASSWORD
+    unset DICOM_STORAGE POSTGRES_STORAGE GRAFANA_STORAGE ORTHANC_AET ORTHANC_PASSWORD
     
     # Restore PostgreSQL password (cannot change without breaking DB)
     POSTGRES_PASSWORD="$SAVED_POSTGRES_PASSWORD"
@@ -89,6 +91,7 @@ fi
 # Parsed options
 DICOM_STORAGE=""
 POSTGRES_STORAGE=""
+GRAFANA_STORAGE=""
 ORTHANC_AET=""
 ORTHANC_PASSWORD=""
 POSTGRES_PASSWORD=""
@@ -1561,6 +1564,7 @@ create_env_file() {
     # Use configured values or defaults
     local env_dicom="${DICOM_STORAGE:-$DEFAULT_DICOM_STORAGE}"
     local env_postgres="${POSTGRES_STORAGE:-$DEFAULT_POSTGRES_STORAGE}"
+    local env_grafana="${GRAFANA_STORAGE:-$DEFAULT_GRAFANA_STORAGE}"
     local env_aet="${ORTHANC_AET:-$DEFAULT_ORTHANC_AET}"
     local env_orthanc_pass="${ORTHANC_PASSWORD:-$DEFAULT_ORTHANC_PASSWORD}"
     local env_pg_pass="${POSTGRES_PASSWORD:-$DEFAULT_POSTGRES_PASSWORD}"
@@ -1586,6 +1590,7 @@ create_env_file() {
 # ─────────────────────────────────────────────────────────────────────────────────
 DICOM_STORAGE=$env_dicom
 POSTGRES_STORAGE=$env_postgres
+GRAFANA_STORAGE=$env_grafana
 
 # ─────────────────────────────────────────────────────────────────────────────────
 # DICOM SETTINGS
@@ -1679,10 +1684,114 @@ update_orthanc_json() {
     log_success "config/orthanc.json updated"
 }
 
+# ─────────────────────────────────────────────────────────────────────────────────
+# Handle existing data in a storage directory
+# Returns: 0 = proceed, 1 = abort
+# ─────────────────────────────────────────────────────────────────────────────────
+handle_existing_data() {
+    local dir_path="$1"
+    local dir_name="$2"  # Human-readable name (e.g., "DICOM Storage", "PostgreSQL")
+    
+    # Check if directory exists and has content
+    if [[ ! -d "$dir_path" ]]; then
+        return 0  # Directory doesn't exist, safe to create
+    fi
+    
+    # Check if directory has any content
+    local file_count=$(find "$dir_path" -mindepth 1 2>/dev/null | head -100 | wc -l)
+    if [[ $file_count -eq 0 ]]; then
+        return 0  # Directory exists but is empty
+    fi
+    
+    # Directory has content - get size
+    local dir_size=$(sudo du -sh "$dir_path" 2>/dev/null | cut -f1)
+    
+    echo
+    echo -e "${YELLOW}════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${YELLOW}  ⚠️  EXISTING DATA DETECTED${NC}"
+    echo -e "${YELLOW}════════════════════════════════════════════════════════════════${NC}"
+    echo
+    echo -e "  ${CYAN}Location:${NC} $dir_path"
+    echo -e "  ${CYAN}Type:${NC}     $dir_name"
+    echo -e "  ${CYAN}Size:${NC}     $dir_size"
+    echo -e "  ${CYAN}Files:${NC}    ~$file_count+ items"
+    echo
+    echo -e "  What would you like to do with this data?"
+    echo
+    echo -e "    ${GREEN}1)${NC} Keep it (use existing data, if compatible)"
+    echo -e "    ${YELLOW}2)${NC} Archive it (move to backup, start fresh)"
+    echo -e "    ${RED}3)${NC} Delete it (permanently remove, start fresh)"
+    echo -e "    ${BLUE}4)${NC} Abort (cancel setup)"
+    echo
+    
+    while true; do
+        read -p "  Enter choice [1-4]: " choice
+        case "$choice" in
+            1)
+                log_info "Keeping existing data in $dir_path"
+                return 0
+                ;;
+            2)
+                # Archive to backup directory
+                local timestamp=$(date +%Y%m%d_%H%M%S)
+                local backup_dir="$SCRIPT_DIR/backups"
+                local archive_name="${dir_name// /_}_${timestamp}.tar.gz"
+                
+                mkdir -p "$backup_dir"
+                
+                log_info "Archiving $dir_path to $backup_dir/$archive_name..."
+                if sudo tar -czf "$backup_dir/$archive_name" -C "$(dirname "$dir_path")" "$(basename "$dir_path")" 2>/dev/null; then
+                    log_success "Archived to: $backup_dir/$archive_name"
+                    
+                    # Clear the directory (but keep it)
+                    log_info "Clearing $dir_path..."
+                    sudo rm -rf "${dir_path:?}"/* 2>/dev/null || true
+                    log_success "Directory cleared"
+                else
+                    log_error "Failed to create archive"
+                    return 1
+                fi
+                return 0
+                ;;
+            3)
+                echo
+                echo -e "  ${RED}⚠️  WARNING: This will permanently delete all data in:${NC}"
+                echo -e "     $dir_path ($dir_size)"
+                echo
+                read -p "  Type 'DELETE' to confirm: " confirm
+                if [[ "$confirm" == "DELETE" ]]; then
+                    log_info "Deleting contents of $dir_path..."
+                    sudo rm -rf "${dir_path:?}"/* 2>/dev/null || true
+                    log_success "Directory cleared"
+                    return 0
+                else
+                    log_warn "Deletion cancelled"
+                    return 1
+                fi
+                ;;
+            4)
+                log_info "Setup aborted by user"
+                return 1
+                ;;
+            *)
+                echo -e "  ${RED}Invalid choice. Please enter 1, 2, 3, or 4.${NC}"
+                ;;
+        esac
+    done
+}
+
 create_directories() {
     log_info "Creating storage directories..."
     
-    # DICOM storage
+    # Handle DICOM storage
+    if [[ -d "$DICOM_STORAGE" ]]; then
+        if ! handle_existing_data "$DICOM_STORAGE" "DICOM_Storage"; then
+            log_error "Setup aborted due to existing DICOM data"
+            exit 1
+        fi
+    fi
+    
+    # Create DICOM storage if needed
     if [[ ! -d "$DICOM_STORAGE" ]]; then
         if sudo mkdir -p "$DICOM_STORAGE" 2>/dev/null || mkdir -p "$DICOM_STORAGE" 2>/dev/null; then
             log_success "Created: $DICOM_STORAGE"
@@ -1691,7 +1800,7 @@ create_directories() {
             log_warn "You may need to create it manually with: sudo mkdir -p $DICOM_STORAGE"
         fi
     else
-        log_success "Exists: $DICOM_STORAGE"
+        log_success "Ready: $DICOM_STORAGE"
     fi
     
     # Set DICOM permissions (Orthanc runs as UID 1000)
@@ -1699,7 +1808,15 @@ create_directories() {
         chown -R 1000:1000 "$DICOM_STORAGE" 2>/dev/null || \
         log_warn "Could not set ownership on $DICOM_STORAGE"
     
-    # PostgreSQL storage
+    # Handle PostgreSQL storage
+    if [[ -d "$POSTGRES_STORAGE" ]]; then
+        if ! handle_existing_data "$POSTGRES_STORAGE" "PostgreSQL_Data"; then
+            log_error "Setup aborted due to existing PostgreSQL data"
+            exit 1
+        fi
+    fi
+    
+    # Create PostgreSQL storage if needed
     if [[ ! -d "$POSTGRES_STORAGE" ]]; then
         if sudo mkdir -p "$POSTGRES_STORAGE" 2>/dev/null || mkdir -p "$POSTGRES_STORAGE" 2>/dev/null; then
             log_success "Created: $POSTGRES_STORAGE"
@@ -1708,7 +1825,7 @@ create_directories() {
             log_warn "You may need to create it manually with: sudo mkdir -p $POSTGRES_STORAGE"
         fi
     else
-        log_success "Exists: $POSTGRES_STORAGE"
+        log_success "Ready: $POSTGRES_STORAGE"
     fi
     
     # Set PostgreSQL permissions (postgres runs as UID 999)
@@ -1716,7 +1833,30 @@ create_directories() {
         chown -R 999:999 "$POSTGRES_STORAGE" 2>/dev/null || \
         log_warn "Could not set ownership on $POSTGRES_STORAGE"
     
-    # Grafana provisioning directories
+    # Handle Grafana storage if configured
+    if [[ -n "${GRAFANA_STORAGE:-}" && -d "$GRAFANA_STORAGE" ]]; then
+        if ! handle_existing_data "$GRAFANA_STORAGE" "Grafana_Data"; then
+            log_error "Setup aborted due to existing Grafana data"
+            exit 1
+        fi
+    fi
+    
+    # Create Grafana storage if configured
+    if [[ -n "${GRAFANA_STORAGE:-}" ]]; then
+        if [[ ! -d "$GRAFANA_STORAGE" ]]; then
+            if sudo mkdir -p "$GRAFANA_STORAGE" 2>/dev/null || mkdir -p "$GRAFANA_STORAGE" 2>/dev/null; then
+                log_success "Created: $GRAFANA_STORAGE"
+            else
+                log_warn "Could not create Grafana storage: $GRAFANA_STORAGE"
+            fi
+        fi
+        # Set Grafana permissions (runs as UID 472)
+        sudo chown -R 472:472 "$GRAFANA_STORAGE" 2>/dev/null || \
+            chown -R 472:472 "$GRAFANA_STORAGE" 2>/dev/null || \
+            log_warn "Could not set ownership on $GRAFANA_STORAGE"
+    fi
+    
+    # Grafana provisioning directories (in repo, not data)
     log_info "Setting up Grafana configuration..."
     mkdir -p "$SCRIPT_DIR/grafana/provisioning/datasources" 2>/dev/null || true
     mkdir -p "$SCRIPT_DIR/grafana/provisioning/dashboards" 2>/dev/null || true
