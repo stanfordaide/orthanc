@@ -313,6 +313,214 @@ function Router.manualSend(studyId, destination, instanceIds)
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────────
+-- SECTION 6: RECOVERY / CLEANUP FUNCTIONS
+-- ─────────────────────────────────────────────────────────────────────────────────
+-- Functions for manual intervention: clearing AI output, fresh reprocessing
+
+--
+-- Check if a series is AI output (should be deleted for fresh reprocess)
+-- Uses the same detection logic as Matcher
+--
+-- @param seriesId: string - Orthanc series ID
+-- @return isAIOutput: boolean, reason: string
+--
+local function isAIOutputSeries(seriesId)
+    -- Get series info to find an instance
+    local success, seriesInfo = pcall(function()
+        return ParseJson(RestApiGet("/series/" .. seriesId))
+    end)
+    
+    if not success or not seriesInfo then
+        Log.warn("Could not get series info", { seriesId = seriesId })
+        return false, "unknown"
+    end
+    
+    local instances = seriesInfo.Instances or {}
+    if #instances == 0 then
+        return false, "no_instances"
+    end
+    
+    -- Check first instance's tags
+    local instSuccess, tags = pcall(function()
+        return ParseJson(RestApiGet("/instances/" .. instances[1] .. "/simplified-tags"))
+    end)
+    
+    if not instSuccess or not tags then
+        return false, "no_tags"
+    end
+    
+    -- Check 1: Manufacturer is StanfordAIDE
+    local manufacturer = tags.Manufacturer or ""
+    if Utils.containsIgnoreCase(manufacturer, "STANFORDAIDE") then
+        return true, "manufacturer_stanfordaide"
+    end
+    
+    -- Check 2: Modality is SR (Structured Report)
+    local modality = tags.Modality or ""
+    if Utils.upper(modality) == "SR" then
+        return true, "modality_sr"
+    end
+    
+    -- Check 3: SeriesDescription matches AI patterns
+    local seriesDesc = tags.SeriesDescription or ""
+    if Utils.containsIgnoreCase(seriesDesc, "AI MEASUREMENTS") or
+       Utils.containsIgnoreCase(seriesDesc, "QA VISUALIZATION") then
+        return true, "series_description_ai"
+    end
+    
+    -- Check 4: SoftwareVersions contains AI marker
+    local softwareVersions = tags.SoftwareVersions or ""
+    if Utils.containsIgnoreCase(softwareVersions, "PEDIATRIC_LEG_LENGTH_V") then
+        return true, "software_version_ai"
+    end
+    
+    return false, "original"
+end
+
+--
+-- Clear all AI output series from a study
+-- This removes StanfordAIDE-generated series so the study can be reprocessed fresh
+--
+-- @param studyId: string - Orthanc study ID
+-- @return deletedCount: number, deletedSeries: table
+--
+function Router.clearAIOutput(studyId)
+    Log.info("Clearing AI output from study", { studyId = studyId })
+    
+    -- Get study info
+    local success, studyInfo = pcall(function()
+        return ParseJson(RestApiGet("/studies/" .. studyId))
+    end)
+    
+    if not success or not studyInfo then
+        Log.error("Could not get study info", { studyId = studyId })
+        return 0, {}
+    end
+    
+    local seriesIds = studyInfo.Series or {}
+    local deletedCount = 0
+    local deletedSeries = {}
+    local keptCount = 0
+    
+    Log.info("Checking series for AI output", { 
+        studyId = studyId, 
+        totalSeries = #seriesIds 
+    })
+    
+    for _, seriesId in ipairs(seriesIds) do
+        local isAI, reason = isAIOutputSeries(seriesId)
+        
+        if isAI then
+            -- Delete the AI output series
+            local deleteSuccess = pcall(function()
+                RestApiDelete("/series/" .. seriesId)
+            end)
+            
+            if deleteSuccess then
+                Log.info("Deleted AI output series", { 
+                    seriesId = seriesId, 
+                    reason = reason 
+                })
+                deletedCount = deletedCount + 1
+                table.insert(deletedSeries, { id = seriesId, reason = reason })
+            else
+                Log.error("Failed to delete series", { seriesId = seriesId })
+            end
+        else
+            keptCount = keptCount + 1
+            Log.debug("Keeping original series", { 
+                seriesId = seriesId, 
+                reason = reason 
+            })
+        end
+    end
+    
+    Log.info("AI output cleared", { 
+        studyId = studyId,
+        deleted = deletedCount,
+        kept = keptCount
+    })
+    
+    return deletedCount, deletedSeries
+end
+
+--
+-- Get study tags from Orthanc REST API
+-- Used when reprocessing (we don't have tags from an event)
+--
+-- @param studyId: string - Orthanc study ID
+-- @return tags: table or nil
+--
+local function getStudyTags(studyId)
+    local success, studyInfo = pcall(function()
+        return ParseJson(RestApiGet("/studies/" .. studyId))
+    end)
+    
+    if success and studyInfo then
+        return studyInfo.MainDicomTags or {}
+    end
+    return nil
+end
+
+--
+-- Fresh reprocess: Clear AI output and reprocess study from scratch
+-- This is the main function for manual intervention
+--
+-- @param studyId: string - Orthanc study ID
+-- @param processFunc: function - The processStudy function from main.lua
+-- @return success: boolean
+--
+function Router.freshReprocess(studyId, processFunc)
+    Log.info("═══════════════════════════════════════════════════════════")
+    Log.info("Starting FRESH REPROCESS", { studyId = studyId })
+    
+    -- Step 1: Verify study exists
+    local tags = getStudyTags(studyId)
+    if not tags then
+        Log.error("Study not found", { studyId = studyId })
+        return false
+    end
+    
+    Log.info("Study found", { 
+        studyId = studyId,
+        description = tags.StudyDescription or "unknown"
+    })
+    
+    -- Step 2: Clear AI output
+    local deletedCount, deletedSeries = Router.clearAIOutput(studyId)
+    
+    -- Step 3: Reset tracking state
+    if Tracker and Tracker.resetStudy then
+        Log.info("Resetting tracking state", { studyId = studyId })
+        Tracker.resetStudy(studyId)
+    else
+        Log.warn("Tracker.resetStudy not available, skipping tracking reset")
+    end
+    
+    -- Step 4: Re-fetch tags (in case clearing changed something)
+    tags = getStudyTags(studyId)
+    if not tags then
+        Log.error("Study disappeared after clearing AI output", { studyId = studyId })
+        return false
+    end
+    
+    -- Step 5: Reprocess using the provided function
+    if processFunc then
+        Log.info("Reprocessing study", { studyId = studyId })
+        local success = processFunc(studyId, tags)
+        Log.info("Fresh reprocess complete", { 
+            studyId = studyId, 
+            success = success 
+        })
+        Log.info("═══════════════════════════════════════════════════════════")
+        return success
+    else
+        Log.warn("No processFunc provided, cannot reprocess")
+        return false
+    end
+end
+
+-- ─────────────────────────────────────────────────────────────────────────────────
 -- RETURN THE ROUTER MODULE
 -- ─────────────────────────────────────────────────────────────────────────────────
 

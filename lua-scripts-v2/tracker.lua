@@ -155,18 +155,45 @@ end
 -- @param studyId: string - Orthanc study ID (of the returned study)
 --
 function Tracker.aiResultsReceived(studyId)
+    Log.info("aiResultsReceived called", { studyId = studyId or "nil" })
+    
     if not studyId then
         Log.warn("aiResultsReceived called without studyId")
         return false
     end
     
     local payload = {
-        study_id = studyId,
+        study_id = tostring(studyId),
     }
     
     local endpoint = (Config.API and Config.API.ENDPOINTS and Config.API.ENDPOINTS.TRACK_AI)
                      or "/track/ai-results"
     
+    Log.info("Tracking AI results received", { studyId = studyId, endpoint = endpoint })
+    return apiCall(endpoint, payload)
+end
+
+--
+-- Reset a study's tracking state for fresh reprocessing
+-- Clears all workflow data so the study can go through the pipeline again
+--
+-- @param studyId: string - Orthanc study ID
+--
+function Tracker.resetStudy(studyId)
+    Log.info("resetStudy called", { studyId = studyId or "nil" })
+    
+    if not studyId then
+        Log.warn("resetStudy called without studyId")
+        return false
+    end
+    
+    local payload = {
+        study_id = tostring(studyId),
+    }
+    
+    local endpoint = "/track/reset"
+    
+    Log.info("Resetting study tracking state", { studyId = studyId, endpoint = endpoint })
     return apiCall(endpoint, payload)
 end
 

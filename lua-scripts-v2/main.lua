@@ -284,8 +284,98 @@ function CheckHealth()
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────────
+-- SECTION 7: MANUAL INTERVENTION FUNCTIONS
+-- ─────────────────────────────────────────────────────────────────────────────────
+-- These functions allow operators to manually trigger routing operations
+
+--
+-- Reprocess a study that's already in Orthanc
+-- Use this to re-run the routing logic for a study
+--
+-- @param studyId: string - Orthanc study ID
+-- @return success: boolean
+--
+-- Usage from Lua console or /tools/execute-script:
+--   ReprocessStudy("3f00cf17-82c42772-d73f3732-9067cd55-516acded")
+--
+function ReprocessStudy(studyId)
+    print("[RADWATCH] Manual reprocess requested for: " .. tostring(studyId))
+    
+    if not studyId then
+        print("[RADWATCH] ERROR: studyId is required")
+        return false
+    end
+    
+    -- Fetch study tags from Orthanc
+    local success, studyInfo = pcall(function()
+        return ParseJson(RestApiGet("/studies/" .. studyId))
+    end)
+    
+    if not success or not studyInfo then
+        print("[RADWATCH] ERROR: Study not found: " .. tostring(studyId))
+        return false
+    end
+    
+    local tags = studyInfo.MainDicomTags or {}
+    print("[RADWATCH] Found study: " .. (tags.StudyDescription or "unknown"))
+    
+    -- Call the main processing function
+    return processStudy(studyId, tags)
+end
+
+--
+-- Fresh reprocess: Clear AI output and reprocess from scratch
+-- Use this when you need to completely redo AI processing
+--
+-- @param studyId: string - Orthanc study ID
+-- @return success: boolean
+--
+-- Usage from Lua console or /tools/execute-script:
+--   FreshReprocess("3f00cf17-82c42772-d73f3732-9067cd55-516acded")
+--
+function FreshReprocess(studyId)
+    print("[RADWATCH] Fresh reprocess requested for: " .. tostring(studyId))
+    
+    if not studyId then
+        print("[RADWATCH] ERROR: studyId is required")
+        return false
+    end
+    
+    -- Use Router.freshReprocess with processStudy as the callback
+    return Router.freshReprocess(studyId, processStudy)
+end
+
+--
+-- Clear AI output from a study without reprocessing
+-- Use this to just remove AI-generated series
+--
+-- @param studyId: string - Orthanc study ID
+-- @return deletedCount: number
+--
+-- Usage from Lua console or /tools/execute-script:
+--   ClearAIOutput("3f00cf17-82c42772-d73f3732-9067cd55-516acded")
+--
+function ClearAIOutput(studyId)
+    print("[RADWATCH] Clear AI output requested for: " .. tostring(studyId))
+    
+    if not studyId then
+        print("[RADWATCH] ERROR: studyId is required")
+        return 0
+    end
+    
+    local deletedCount, deletedSeries = Router.clearAIOutput(studyId)
+    print("[RADWATCH] Deleted " .. deletedCount .. " AI output series")
+    
+    return deletedCount
+end
+
+-- ─────────────────────────────────────────────────────────────────────────────────
 -- STARTUP COMPLETE
 -- ─────────────────────────────────────────────────────────────────────────────────
 
 print("[RADWATCH] Main script loaded. Waiting for studies...")
+print("[RADWATCH] Manual intervention functions available:")
+print("  - ReprocessStudy(studyId)  : Re-run routing for existing study")
+print("  - FreshReprocess(studyId)  : Clear AI output and reprocess from scratch")
+print("  - ClearAIOutput(studyId)   : Remove AI-generated series only")
 print("═══════════════════════════════════════════════════════════════")

@@ -343,6 +343,40 @@ def track_destination():
     return jsonify({'ok': True})
 
 
+@app.route('/track/reset', methods=['POST'])
+def track_reset():
+    """Reset a study's tracking state for fresh reprocessing
+    
+    This clears all workflow data so the study can go through the pipeline again.
+    Use this when you need to reprocess a study from scratch.
+    """
+    data = request.json or {}
+    study_id = data.get('study_id')
+    
+    if not study_id:
+        return jsonify({'error': 'study_id required'}), 400
+    
+    app.logger.info(f"[track/reset] Resetting study: {study_id}")
+    
+    conn = get_db()
+    cur = conn.cursor()
+    
+    # Delete the existing workflow record - it will be recreated when reprocessed
+    cur.execute("DELETE FROM study_workflows WHERE study_id = %s", (study_id,))
+    
+    # Also clean up any pending jobs for this study
+    cur.execute("DELETE FROM pending_jobs WHERE study_id = %s", (study_id,))
+    
+    deleted_count = cur.rowcount
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+    
+    app.logger.info(f"[track/reset] Study {study_id} reset complete")
+    return jsonify({'ok': True, 'deleted': deleted_count})
+
+
 @app.route('/track/job', methods=['POST'])
 def track_job():
     """Register a pending job to be tracked for completion by the background poller"""
