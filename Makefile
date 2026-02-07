@@ -84,13 +84,13 @@ menu:
 # SETUP
 # ─────────────────────────────────────────────────────────────────────────────────
 
-# Direct setup (bypasses interactive menu)
+# Interactive setup (shows options when existing install detected)
 setup:
 	@chmod +x setup.sh
 	@DICOM_STORAGE="$(DICOM_STORAGE)" \
 	 POSTGRES_STORAGE="$(POSTGRES_STORAGE)" \
 	 ORTHANC_AET="$(ORTHANC_AET)" \
-	 ./setup.sh --defaults
+	 ./setup.sh --setup
 
 # Quick setup with defaults or overrides
 quick-setup:

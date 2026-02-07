@@ -51,6 +51,7 @@ BACKUP_DIR="./backups"
 
 # Interactive menu mode
 INTERACTIVE_MENU=false
+DO_SETUP=false
 
 # ─────────────────────────────────────────────────────────────────────────────────
 # HELPERS
@@ -1148,6 +1149,11 @@ parse_args() {
                 INTERACTIVE_MENU=true
                 shift
                 ;;
+            --setup)
+                # Run setup flow directly (not full menu), interactive
+                DO_SETUP=true
+                shift
+                ;;
             -h|--help)
                 show_usage
                 exit 0
@@ -1692,6 +1698,33 @@ main() {
     # Handle --menu flag
     if [[ "$INTERACTIVE_MENU" == true ]]; then
         show_interactive_menu
+        exit 0
+    fi
+    
+    # Handle --setup flag (interactive setup without full menu)
+    if [[ "$DO_SETUP" == true ]]; then
+        print_banner
+        check_existing
+        collect_config
+        show_summary
+        
+        echo
+        read -p "Proceed with setup? [Y/n]: " confirm
+        if [[ "$confirm" =~ ^[Nn] ]]; then
+            echo "Setup cancelled."
+            exit 0
+        fi
+        
+        echo
+        create_env_file
+        update_orthanc_json
+        create_directories
+        make_executable
+        start_services
+        if [[ $? -eq 0 ]]; then
+            seed_modalities
+        fi
+        print_completion
         exit 0
     fi
     
