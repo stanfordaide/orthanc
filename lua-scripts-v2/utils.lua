@@ -131,16 +131,39 @@ end
 -- Note: Orthanc provides global JsonEncode and ParseJson functions
 
 -- Safely encode to JSON
+-- NOTE: We manually build JSON to avoid JsonEncode C++ exceptions that crash Orthanc
 function Utils.toJson(tbl)
     if tbl == nil then return "{}" end
-    local success, result = pcall(function()
-        return JsonEncode(tbl)  -- Orthanc built-in
-    end)
-    if success then
-        return result
-    else
-        return "{}"
+    
+    -- Manual JSON encoding for simple flat tables (no nested tables)
+    local parts = {}
+    for key, value in pairs(tbl) do
+        local keyStr = '"' .. tostring(key) .. '"'
+        local valueStr
+        
+        if value == nil then
+            valueStr = "null"
+        elseif type(value) == "boolean" then
+            valueStr = value and "true" or "false"
+        elseif type(value) == "number" then
+            valueStr = tostring(value)
+        elseif type(value) == "string" then
+            -- Escape special characters in strings
+            local escaped = value:gsub('\\', '\\\\')
+                                 :gsub('"', '\\"')
+                                 :gsub('\n', '\\n')
+                                 :gsub('\r', '\\r')
+                                 :gsub('\t', '\\t')
+            valueStr = '"' .. escaped .. '"'
+        else
+            -- For other types (tables, functions, etc), convert to string
+            valueStr = '"' .. tostring(value) .. '"'
+        end
+        
+        table.insert(parts, keyStr .. ":" .. valueStr)
     end
+    
+    return "{" .. table.concat(parts, ",") .. "}"
 end
 
 -- Safely parse JSON
