@@ -90,8 +90,13 @@ Config.MATCHING = {
         "BONE LENGTH",                        -- Shorter fallback
     },
     
-    -- Pattern to identify AI results coming back from MERCURE
-    AI_RESULT_PATTERN = "STANFORDAIDE",  -- SeriesDescription contains this
+    -- Patterns to identify AI results coming back from MERCURE
+    -- If ANY series matches ANY of these, it's considered AI_RESULT
+    AI_RESULT_PATTERNS = {
+        "AI MEASUREMENTS",      -- AI output measurements
+        "QA VISUALIZATION",     -- QA overlay images
+        "STANFORDAIDE",         -- Legacy: some systems may use this
+    },
     
     -- Pattern for QA Visualization (route to LPCH/LPCHT)
     QA_MEASUREMENTS_PATTERN = "AI MEASUREMENTS",

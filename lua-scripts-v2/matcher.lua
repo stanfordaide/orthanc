@@ -61,14 +61,49 @@ local function matchesBoneLengthStudy(studyDescription)
 end
 
 --
--- Check if any instance has AI result marker in SeriesDescription
+-- Check if any instance has AI result marker
+-- Multiple detection methods (matching original autosend_leg_length.lua logic)
 --
 local function hasAIResultMarker(instances)
-    local aiPattern = Config.MATCHING and Config.MATCHING.AI_RESULT_PATTERN or "STANFORDAIDE"
-    
     for _, instance in ipairs(instances or {}) do
+        -- CHECK 1: Manufacturer is STANFORDAIDE (primary AI marker)
+        local manufacturer = Utils.safeGet(instance, "Manufacturer", "")
+        if Utils.containsIgnoreCase(manufacturer, "STANFORDAIDE") then
+            Log.debug("AI result marker found", { check = "Manufacturer", value = manufacturer })
+            return true
+        end
+        
+        -- CHECK 2: Structured Report modality (AI outputs are often SR)
+        local modality = Utils.safeGet(instance, "Modality", "")
+        if Utils.upper(modality) == "SR" then
+            Log.debug("AI result marker found", { check = "Modality", value = modality })
+            return true
+        end
+        
+        -- CHECK 3: AI-specific series descriptions
         local seriesDesc = Utils.safeGet(instance, "SeriesDescription", "")
-        if Utils.containsIgnoreCase(seriesDesc, aiPattern) then
+        if Utils.containsIgnoreCase(seriesDesc, "AI MEASUREMENTS") or 
+           Utils.containsIgnoreCase(seriesDesc, "QA VISUALIZATION") then
+            Log.debug("AI result marker found", { check = "SeriesDescription", value = seriesDesc })
+            return true
+        end
+        
+        -- CHECK 4: Software version pattern
+        local softwareVersions = Utils.safeGet(instance, "SoftwareVersions", "")
+        if Utils.containsIgnoreCase(softwareVersions, "PEDIATRIC_LEG_LENGTH_V") then
+            Log.debug("AI result marker found", { check = "SoftwareVersions", value = softwareVersions })
+            return true
+        end
+        
+        -- CHECK 5: Institution/Station/Department combination
+        local institutionName = Utils.safeGet(instance, "InstitutionName", "")
+        local department = Utils.safeGet(instance, "InstitutionalDepartmentName", "")
+        local stationName = Utils.safeGet(instance, "StationName", "")
+        if Utils.upper(institutionName) == "SOM" and
+           Utils.upper(department) == "RADIOLOGY" and
+           Utils.upper(stationName) == "LPCH" and
+           Utils.containsIgnoreCase(manufacturer, "STANFORDAIDE") then
+            Log.debug("AI result marker found", { check = "InstitutionCombo" })
             return true
         end
     end
@@ -281,14 +316,18 @@ end
 --
 function Matcher.describePatterns()
     local patterns = Config.MATCHING and Config.MATCHING.BONE_LENGTH_PATTERNS or {}
-    local aiPattern = Config.MATCHING and Config.MATCHING.AI_RESULT_PATTERN or "STANFORDAIDE"
+    local aiPatterns = Config.MATCHING and Config.MATCHING.AI_RESULT_PATTERNS 
+                       or { "AI MEASUREMENTS", "QA VISUALIZATION", "STANFORDAIDE" }
     
     print("=== Matcher Patterns ===")
     print("Bone Length Patterns:")
     for i, p in ipairs(patterns) do
         print("  " .. i .. ". " .. p)
     end
-    print("AI Result Pattern: " .. aiPattern)
+    print("AI Result Patterns:")
+    for i, p in ipairs(aiPatterns) do
+        print("  " .. i .. ". " .. p)
+    end
     print("QA Viz Pattern: " .. (Config.MATCHING and Config.MATCHING.QA_VIZ_PATTERN or "QA VISUALIZATION"))
     print("========================")
 end
