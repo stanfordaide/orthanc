@@ -667,7 +667,7 @@ do_interactive_restore() {
             local size=$(du -h "$backup" 2>/dev/null | cut -f1)
             local date=$(stat -c %y "$backup" 2>/dev/null | cut -d. -f1)
             echo "  $i) $(basename "$backup") ($size, $date)"
-            ((i++))
+            i=$((i + 1))
         done
         echo
         read -p "Select backup [1-${#backups[@]}] or enter path: " selection
@@ -1642,7 +1642,7 @@ EOF
     # First check if we have existing modalities in environment
     while IFS='=' read -r var_name var_value; do
         echo "$var_name=$var_value" >> .env
-        ((modalities_added++))
+        modalities_added=$((modalities_added + 1))
     done < <(env | grep "^MODALITY_" | sort)
     
     # If no modalities found, copy from defaults
@@ -1827,7 +1827,7 @@ seed_modalities() {
             -H "Content-Type: application/json" \
             -d "$config" &>/dev/null; then
             log_success "Configured modality: $name ($aet @ $host:$port)"
-            ((modality_count++))
+            modality_count=$((modality_count + 1))
         else
             log_warn "Failed to configure modality: $name"
         fi
