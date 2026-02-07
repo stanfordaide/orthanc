@@ -129,12 +129,18 @@ services:
     ports:
       - "${ROUTING_API_PORT:-8044}:5000"
     environment:
-      # Database connection
+      # Orthanc Database connection
       - DB_HOST=orthanc-db
       - DB_PORT=5432
       - DB_NAME=orthanc
       - DB_USER=${POSTGRES_USER:-orthanc}
       - DB_PASS=${POSTGRES_PASSWORD:-ChangeThisPassword}
+      # Mercure Database connection (for AI processing status)
+      - MERCURE_DB_HOST=${MERCURE_DB_HOST:-mercure_db_1}
+      - MERCURE_DB_PORT=5432
+      - MERCURE_DB_NAME=mercure
+      - MERCURE_DB_USER=mercure
+      - MERCURE_DB_PASS=${MERCURE_DB_PASS:-}
       # Orthanc connection (for job polling)
       - ORTHANC_URL=http://orthanc:8042
       - ORTHANC_USER=${ORTHANC_USERNAME:-orthanc_admin}
@@ -146,6 +152,9 @@ services:
         condition: service_healthy
       # Note: Don't depend on orthanc - causes circular dependency
       # routing-api should start before orthanc so Lua can call it
+    networks:
+      - default
+      - mercure_default
     restart: always
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
@@ -197,6 +206,10 @@ secrets:
 networks:
   default:
     driver: bridge
+  # Connect to Mercure's network for AI processing status tracking
+  mercure_default:
+    external: true
+    name: mercure_default
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # VOLUMES

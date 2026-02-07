@@ -68,7 +68,7 @@
                 </div>
                 <div class="flex items-center gap-4 text-xs text-slate-500">
                     <a :href="orthancWebUrl" target="_blank" class="hover:text-slate-300 transition-colors">Orthanc UI →</a>
-                    <a :href="ohifUrl" target="_blank" class="hover:text-slate-300 transition-colors">OHIF Viewer →</a>
+                    <a :href="orthancWebUrl + '/ohif/'" target="_blank" class="hover:text-slate-300 transition-colors">OHIF Viewer →</a>
                     <a :href="grafanaUrl" target="_blank" class="hover:text-slate-300 transition-colors">Grafana →</a>
                 </div>
             </div>
@@ -145,10 +145,112 @@
         </div>
     </div>
 
+    <!-- Mercure AI Processing Details Modal -->
+    <div x-show="showMercureModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" @keydown.escape.window="showMercureModal = false">
+        <div class="absolute inset-0 bg-black/70" @click="showMercureModal = false"></div>
+        <div class="relative bg-midnight-800 border border-neon-purple/50 rounded-xl max-w-2xl w-full max-h-[80vh] overflow-y-auto p-6 shadow-2xl">
+            <button @click="showMercureModal = false" class="absolute top-4 right-4 text-slate-500 hover:text-white">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+            
+            <div class="flex items-center gap-3 mb-4">
+                <span class="text-3xl">🤖</span>
+                <div>
+                    <h2 class="text-xl font-bold text-neon-purple">Mercure AI Processing</h2>
+                    <p class="text-xs text-slate-500 font-mono" x-text="mercureStudyDetail?.study_uid?.substring(0, 30) + '...' || 'Loading...'"></p>
+                </div>
+            </div>
+            
+            <template x-if="mercureStudyDetail">
+                <div class="space-y-4 text-sm">
+                    <!-- Processing Status -->
+                    <div class="bg-midnight-700 rounded-lg p-4">
+                        <h3 class="font-semibold text-white mb-3 flex items-center gap-2">
+                            <span>📊</span> Processing Status
+                        </h3>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <div class="text-slate-500 text-xs mb-1">Status</div>
+                                <div class="font-mono"
+                                     :class="mercureStudyDetail.processing?.status === 'completed' ? 'text-neon-green' : 
+                                             mercureStudyDetail.processing?.status === 'failed' ? 'text-neon-red' : 
+                                             'text-amber-400'"
+                                     x-text="mercureStudyDetail.processing?.status || 'Unknown'"></div>
+                            </div>
+                            <div>
+                                <div class="text-slate-500 text-xs mb-1">Duration</div>
+                                <div class="font-mono" x-text="formatMercureDuration(mercureStudyDetail.processing?.duration_seconds)"></div>
+                            </div>
+                            <div>
+                                <div class="text-slate-500 text-xs mb-1">Started</div>
+                                <div class="font-mono text-xs" x-text="mercureStudyDetail.processing?.started_at ? new Date(mercureStudyDetail.processing.started_at).toLocaleString() : '—'"></div>
+                            </div>
+                            <div>
+                                <div class="text-slate-500 text-xs mb-1">Completed</div>
+                                <div class="font-mono text-xs" x-text="mercureStudyDetail.processing?.completed_at ? new Date(mercureStudyDetail.processing.completed_at).toLocaleString() : '—'"></div>
+                            </div>
+                        </div>
+                        <div x-show="mercureStudyDetail.processing?.error" class="mt-3 p-2 bg-neon-red/10 border border-neon-red/30 rounded text-neon-red text-xs">
+                            <span class="font-semibold">Error:</span> <span x-text="mercureStudyDetail.processing?.error"></span>
+                        </div>
+                    </div>
+                    
+                    <!-- Series Received -->
+                    <div class="bg-midnight-700 rounded-lg p-4">
+                        <h3 class="font-semibold text-white mb-3 flex items-center gap-2">
+                            <span>📁</span> Series in Mercure
+                            <span class="text-xs bg-midnight-600 px-2 py-0.5 rounded" x-text="mercureStudyDetail.series_count + ' series'"></span>
+                        </h3>
+                        <div class="space-y-2 max-h-40 overflow-y-auto">
+                            <template x-for="s in mercureStudyDetail.series || []" :key="s.series_uid">
+                                <div class="flex justify-between items-center text-xs bg-midnight-600 rounded px-3 py-2">
+                                    <div>
+                                        <span class="text-slate-400" x-text="s.modality"></span>
+                                        <span class="ml-2" x-text="s.description || 'No description'"></span>
+                                    </div>
+                                    <span class="text-slate-500 font-mono" x-text="s.received_at ? new Date(s.received_at).toLocaleTimeString() : ''"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                    
+                    <!-- Event Timeline -->
+                    <div x-show="mercureStudyDetail.events?.length > 0" class="bg-midnight-700 rounded-lg p-4">
+                        <h3 class="font-semibold text-white mb-3 flex items-center gap-2">
+                            <span>📜</span> Event Timeline
+                        </h3>
+                        <div class="space-y-1 max-h-48 overflow-y-auto text-xs">
+                            <template x-for="(e, idx) in mercureStudyDetail.events || []" :key="idx">
+                                <div class="flex items-start gap-2 py-1 border-l-2 border-midnight-500 pl-3">
+                                    <span class="text-slate-500 font-mono whitespace-nowrap" x-text="e.time ? new Date(e.time).toLocaleTimeString() : ''"></span>
+                                    <span class="text-neon-blue" x-text="e.event"></span>
+                                    <span x-show="e.target" class="text-slate-400">→ <span x-text="e.target"></span></span>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                    
+                    <!-- Full Study UID -->
+                    <div class="bg-midnight-700 rounded-lg p-3">
+                        <div class="text-slate-500 text-xs mb-1">Study Instance UID</div>
+                        <div class="font-mono text-xs text-slate-400 break-all" x-text="mercureStudyDetail.study_uid"></div>
+                    </div>
+                </div>
+            </template>
+            
+            <div x-show="!mercureStudyDetail" class="text-center text-slate-500 py-8">
+                <div class="animate-spin text-4xl mb-2">⏳</div>
+                Loading Mercure data...
+            </div>
+        </div>
+    </div>
+
     <main class="container mx-auto px-6 py-8">
         
         <!-- Status Cards -->
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
             <!-- Services -->
             <div class="gradient-border rounded-xl">
                 <div class="rounded-xl p-5">
@@ -163,6 +265,22 @@
                         <span x-show="services.healthy === services.total" class="text-neon-green text-sm">All systems operational</span>
                         <span x-show="services.healthy !== services.total" class="text-neon-yellow text-sm">Some services need attention</span>
                     </div>
+                </div>
+            </div>
+
+            <!-- Mercure AI Integration -->
+            <div class="rounded-xl p-5"
+                 :class="mercureStatus.available ? 'bg-neon-purple/10 border-2 border-neon-purple/50' : 'gradient-border'">
+                <div class="flex items-start justify-between">
+                    <div>
+                        <div class="text-2xl font-bold font-mono" x-text="mercureStatus.available ? 'ON' : 'OFF'"></div>
+                        <div class="text-slate-500 text-sm mt-1">Mercure AI</div>
+                    </div>
+                    <div class="text-3xl" x-text="mercureStatus.available ? '🤖' : '⚫'"></div>
+                </div>
+                <div class="mt-3 pt-3 border-t border-midnight-600 text-sm">
+                    <span x-show="mercureStatus.available" class="text-neon-purple">AI tracking enabled</span>
+                    <span x-show="!mercureStatus.available" class="text-slate-500">Not configured</span>
                 </div>
             </div>
 
@@ -293,7 +411,7 @@
                             <div class="text-2xl mb-1">🏥</div>
                             <div class="text-xs">Orthanc</div>
                         </a>
-                        <a :href="ohifUrl" target="_blank"
+                        <a :href="orthancWebUrl + '/ohif/'" target="_blank"
                            class="px-4 py-3 bg-midnight-700 rounded-lg hover:bg-midnight-600 border border-midnight-600 hover:border-neon-purple transition-all text-center">
                             <div class="text-2xl mb-1">🖼️</div>
                             <div class="text-xs">OHIF Viewer</div>
@@ -344,7 +462,7 @@
                                                         class="text-xs px-2 py-1 bg-midnight-600 rounded hover:bg-neon-blue hover:text-midnight-900 transition-all">
                                                     View
                                                 </button>
-                                                <a :href="ohifUrl + '/viewer/' + study.studyUid" 
+                                                <a :href="orthancWebUrl + '/ohif/viewer?StudyInstanceUIDs=' + study.studyUid" 
                                                    target="_blank"
                                                    class="text-xs px-2 py-1 bg-midnight-600 rounded hover:bg-neon-purple hover:text-white transition-all">
                                                     OHIF
@@ -522,13 +640,16 @@
                             <span class="text-xs text-slate-500" x-text="w.created_at ? new Date(w.created_at).toLocaleString() : ''"></span>
                         </div>
                         <!-- Pipeline Status -->
-                        <div class="flex items-center gap-1 text-xs">
+                        <div class="flex items-center gap-1 text-xs flex-wrap">
                             <!-- MERCURE -->
-                            <div class="flex items-center gap-1 px-2 py-1 rounded"
+                            <div class="flex items-center gap-1 px-2 py-1 rounded cursor-pointer hover:ring-1 hover:ring-neon-purple/50"
                                  :class="w.stages?.mercure?.status === 'success' ? 'bg-neon-green/20 text-neon-green' : 
                                          w.stages?.mercure?.status === 'failed' ? 'bg-neon-red/20 text-neon-red' : 
-                                         'bg-slate-700 text-slate-400'">
+                                         'bg-slate-700 text-slate-400'"
+                                 @click="mercureStatus.available && viewMercureStatus(w)"
+                                 :title="mercureStatus.available ? 'Click to view Mercure details' : 'Mercure not configured'">
                                 <span>📤</span> MERCURE
+                                <span x-show="mercureStatus.available && w.stages?.mercure?.status === 'success'" class="text-neon-purple">🔍</span>
                             </div>
                             <span class="text-slate-600">→</span>
                             <!-- AI Results -->
@@ -607,7 +728,7 @@
                            class="flex-1 px-4 py-3 bg-midnight-700 rounded-lg hover:bg-neon-blue hover:text-midnight-900 transition-all text-center">
                             Open in Orthanc
                         </a>
-                        <a :href="ohifUrl + '/viewer/' + selectedStudy.studyUid"
+                        <a :href="orthancWebUrl + '/ohif/viewer?StudyInstanceUIDs=' + selectedStudy.studyUid"
                            target="_blank"
                            class="flex-1 px-4 py-3 bg-midnight-700 rounded-lg hover:bg-neon-purple hover:text-white transition-all text-center">
                             Open in OHIF
@@ -904,6 +1025,11 @@ function dashboard() {
         showAbout: false,
         toasts: [],
         
+        // Mercure integration
+        mercureStatus: { available: false, message: 'Checking...' },
+        mercureStudyDetail: null,
+        showMercureModal: false,
+        
         // Destination management
         showDestinationModal: false,
         showDeleteConfirm: false,
@@ -927,6 +1053,8 @@ function dashboard() {
         async init() {
             // Load saved test results from localStorage
             this.loadSavedStatuses();
+            // Check Mercure integration status
+            await this.checkMercureStatus();
             await this.refresh();
             // Auto-refresh every 30 seconds
             setInterval(() => this.refresh(), 30000);
@@ -1178,6 +1306,75 @@ function dashboard() {
             // TODO: Query routing_state table via custom endpoint
             // For now, this would need a backend endpoint
             this.stuck = [];
+        },
+        
+        // ═══════════════════════════════════════════════════════════════════════
+        // MERCURE INTEGRATION
+        // ═══════════════════════════════════════════════════════════════════════
+        
+        async checkMercureStatus() {
+            try {
+                const response = await fetch('/api/mercure/status');
+                if (response.ok) {
+                    this.mercureStatus = await response.json();
+                } else {
+                    this.mercureStatus = { available: false, message: 'API error' };
+                }
+            } catch (e) {
+                this.mercureStatus = { available: false, message: 'Connection failed' };
+            }
+        },
+        
+        async getMercureStudyStatus(studyUid) {
+            if (!studyUid || !this.mercureStatus.available) {
+                this.toast('Mercure integration not available', 'warning');
+                return null;
+            }
+            
+            try {
+                const response = await fetch(`/api/mercure/study/${encodeURIComponent(studyUid)}`);
+                if (response.ok) {
+                    this.mercureStudyDetail = await response.json();
+                    this.showMercureModal = true;
+                    return this.mercureStudyDetail;
+                } else {
+                    const err = await response.json();
+                    this.toast(err.error || 'Failed to get Mercure status', 'error');
+                    return null;
+                }
+            } catch (e) {
+                this.toast('Failed to connect to Mercure API', 'error');
+                return null;
+            }
+        },
+        
+        async viewMercureStatus(workflow) {
+            // Get StudyInstanceUID from workflow
+            const studyUid = workflow.study_instance_uid || workflow.studyUid;
+            if (!studyUid) {
+                // Try to get from Orthanc if we only have study_id
+                try {
+                    const response = await fetch(`/api/workflows/${workflow.study_id}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.study_instance_uid) {
+                            return this.getMercureStudyStatus(data.study_instance_uid);
+                        }
+                    }
+                } catch (e) {
+                    console.error('Failed to get study UID:', e);
+                }
+                this.toast('Study UID not available', 'warning');
+                return;
+            }
+            return this.getMercureStudyStatus(studyUid);
+        },
+        
+        formatMercureDuration(seconds) {
+            if (!seconds) return '—';
+            if (seconds < 60) return `${Math.round(seconds)}s`;
+            if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+            return `${Math.round(seconds / 3600)}h ${Math.round((seconds % 3600) / 60)}m`;
         },
         
         async loadRoutingStats() {
