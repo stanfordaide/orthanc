@@ -56,6 +56,13 @@ DEFAULT_TZ="${TZ:-America/Los_Angeles}"
 DEFAULT_GRAFANA_USER="${GRAFANA_USER:-admin}"
 DEFAULT_GRAFANA_PASSWORD="${GRAFANA_PASSWORD:-admin}"
 
+# Mercure integration defaults (for AI processing tracking)
+DEFAULT_MERCURE_DB_HOST="${MERCURE_DB_HOST:-mercure_db_1}"
+DEFAULT_MERCURE_DB_PORT="${MERCURE_DB_PORT:-5432}"
+DEFAULT_MERCURE_DB_NAME="${MERCURE_DB_NAME:-mercure}"
+DEFAULT_MERCURE_DB_USER="${MERCURE_DB_USER:-mercure}"
+DEFAULT_MERCURE_DB_PASS="${MERCURE_DB_PASS:-}"
+
 # Clear working variables
 unset DICOM_STORAGE POSTGRES_STORAGE GRAFANA_STORAGE ORTHANC_AET ORTHANC_PASSWORD ORTHANC_USERNAME
 unset POSTGRES_USER POSTGRES_PASSWORD OPERATOR_UI_PORT ORTHANC_WEB_PORT OHIF_PORT
@@ -1556,6 +1563,12 @@ collect_config() {
         GRAFANA_USER="${GRAFANA_USER:-$DEFAULT_GRAFANA_USER}"
         GRAFANA_PASSWORD="${GRAFANA_PASSWORD:-$DEFAULT_GRAFANA_PASSWORD}"
         TZ="${TZ:-$DEFAULT_TZ}"
+        # Mercure integration (optional)
+        MERCURE_DB_HOST="${MERCURE_DB_HOST:-$DEFAULT_MERCURE_DB_HOST}"
+        MERCURE_DB_PORT="${MERCURE_DB_PORT:-$DEFAULT_MERCURE_DB_PORT}"
+        MERCURE_DB_NAME="${MERCURE_DB_NAME:-$DEFAULT_MERCURE_DB_NAME}"
+        MERCURE_DB_USER="${MERCURE_DB_USER:-$DEFAULT_MERCURE_DB_USER}"
+        MERCURE_DB_PASS="${MERCURE_DB_PASS:-$DEFAULT_MERCURE_DB_PASS}"
         return
     fi
     
@@ -1564,7 +1577,7 @@ collect_config() {
     # ═══════════════════════════════════════════════════════════════════════════
     echo
     echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${BLUE}  1/4  STORAGE PATHS${NC}"
+    echo -e "${BLUE}  1/5  STORAGE PATHS${NC}"
     echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
     echo
     
@@ -1595,7 +1608,7 @@ collect_config() {
     # ═══════════════════════════════════════════════════════════════════════════
     echo
     echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${BLUE}  2/4  DICOM SETTINGS${NC}"
+    echo -e "${BLUE}  2/5  DICOM SETTINGS${NC}"
     echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
     echo
     
@@ -1619,7 +1632,7 @@ collect_config() {
     # ═══════════════════════════════════════════════════════════════════════════
     echo
     echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${BLUE}  3/4  CREDENTIALS${NC}"
+    echo -e "${BLUE}  3/5  CREDENTIALS${NC}"
     echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
     echo
     
@@ -1669,7 +1682,7 @@ collect_config() {
     # ═══════════════════════════════════════════════════════════════════════════
     echo
     echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${BLUE}  4/4  ADVANCED SETTINGS${NC}"
+    echo -e "${BLUE}  4/5  ADVANCED SETTINGS${NC}"
     echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
     echo
     echo -e "  Current web port assignments (sequential from 8040):"
@@ -1722,6 +1735,51 @@ collect_config() {
     else
         TZ="${TZ:-$DEFAULT_TZ}"
     fi
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SECTION 5: MERCURE AI INTEGRATION (Optional)
+    # ═══════════════════════════════════════════════════════════════════════════
+    echo
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}  5/5  MERCURE AI INTEGRATION (Optional)${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+    echo
+    echo -e "  ${YELLOW}Mercure is an AI orchestration platform.${NC}"
+    echo -e "  If Mercure is running on this system, you can enable enhanced"
+    echo -e "  tracking by providing its database credentials."
+    echo
+    echo -e "  Mercure DB password is typically found in:"
+    echo -e "    ${CYAN}/opt/mercure/config/db.env${NC}"
+    echo
+    
+    if [[ -n "$DEFAULT_MERCURE_DB_PASS" ]]; then
+        echo -e "  Current status: ${GREEN}Configured${NC}"
+        echo -e "    Host: ${CYAN}${MERCURE_DB_HOST:-$DEFAULT_MERCURE_DB_HOST}${NC}"
+    else
+        echo -e "  Current status: ${YELLOW}Not configured${NC}"
+    fi
+    echo
+    
+    read -p "Configure Mercure integration? [y/N]: " configure_mercure
+    
+    if [[ "$configure_mercure" =~ ^[Yy] ]]; then
+        echo
+        echo -e "${YELLOW}Mercure PostgreSQL connection settings:${NC}"
+        prompt "Mercure DB host" "$DEFAULT_MERCURE_DB_HOST" MERCURE_DB_HOST
+        prompt "Mercure DB port" "$DEFAULT_MERCURE_DB_PORT" MERCURE_DB_PORT
+        prompt "Mercure DB name" "$DEFAULT_MERCURE_DB_NAME" MERCURE_DB_NAME
+        prompt "Mercure DB user" "$DEFAULT_MERCURE_DB_USER" MERCURE_DB_USER
+        echo
+        echo -e "${YELLOW}Mercure DB password:${NC}"
+        echo "  (Leave blank to skip Mercure integration)"
+        prompt_password "Mercure DB password" MERCURE_DB_PASS "$DEFAULT_MERCURE_DB_PASS"
+    else
+        MERCURE_DB_HOST="${MERCURE_DB_HOST:-$DEFAULT_MERCURE_DB_HOST}"
+        MERCURE_DB_PORT="${MERCURE_DB_PORT:-$DEFAULT_MERCURE_DB_PORT}"
+        MERCURE_DB_NAME="${MERCURE_DB_NAME:-$DEFAULT_MERCURE_DB_NAME}"
+        MERCURE_DB_USER="${MERCURE_DB_USER:-$DEFAULT_MERCURE_DB_USER}"
+        MERCURE_DB_PASS="${MERCURE_DB_PASS:-$DEFAULT_MERCURE_DB_PASS}"
+    fi
 }
 
 show_summary() {
@@ -1754,6 +1812,15 @@ show_summary() {
     echo
     echo -e "  ${CYAN}Other${NC}"
     echo "    Timezone:   ${TZ:-$DEFAULT_TZ}"
+    echo
+    echo -e "  ${CYAN}Mercure AI Integration${NC}"
+    if [[ -n "${MERCURE_DB_PASS:-$DEFAULT_MERCURE_DB_PASS}" ]]; then
+        echo "    Status:     ${GREEN}Enabled${NC}"
+        echo "    Host:       ${MERCURE_DB_HOST:-$DEFAULT_MERCURE_DB_HOST}"
+        echo "    Database:   ${MERCURE_DB_NAME:-$DEFAULT_MERCURE_DB_NAME}"
+    else
+        echo "    Status:     ${YELLOW}Not configured${NC}"
+    fi
     echo
 }
 
@@ -1853,6 +1920,22 @@ EOF
     if [[ $modalities_added -eq 0 && -f "$SCRIPT_DIR/config/env.defaults" ]]; then
         grep "^MODALITY_" "$SCRIPT_DIR/config/env.defaults" >> .env 2>/dev/null || true
     fi
+    
+    # Append Mercure integration settings
+    cat >> .env << EOF
+
+# ─────────────────────────────────────────────────────────────────────────────────
+# MERCURE AI INTEGRATION (Optional)
+# ─────────────────────────────────────────────────────────────────────────────────
+# Enable enhanced AI processing tracking by connecting to Mercure's database.
+# The password is found in: /opt/mercure/config/db.env
+
+MERCURE_DB_HOST=${MERCURE_DB_HOST:-$DEFAULT_MERCURE_DB_HOST}
+MERCURE_DB_PORT=${MERCURE_DB_PORT:-$DEFAULT_MERCURE_DB_PORT}
+MERCURE_DB_NAME=${MERCURE_DB_NAME:-$DEFAULT_MERCURE_DB_NAME}
+MERCURE_DB_USER=${MERCURE_DB_USER:-$DEFAULT_MERCURE_DB_USER}
+MERCURE_DB_PASS=${MERCURE_DB_PASS:-$DEFAULT_MERCURE_DB_PASS}
+EOF
 
     chmod 640 .env
     
