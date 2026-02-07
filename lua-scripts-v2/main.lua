@@ -42,19 +42,24 @@ local function loadModule(name)
 end
 
 -- Load modules in dependency order
-local Config = loadModule("config")
-local Utils = loadModule("utils")
-local Log = loadModule("logger")
-local Tracker = loadModule("tracker")
-local Matcher = loadModule("matcher")
-local Router = loadModule("router")
+-- IMPORTANT: Set globals immediately after each load so dependent modules can access them
 
--- Make modules available globally (for cross-module access)
-_G.RadwatchConfig = Config
-_G.RadwatchUtils = Utils
-_G.RadwatchLog = Log
+local Config = loadModule("config")
+_G.RadwatchConfig = Config  -- Set global before loading modules that depend on it
+
+local Utils = loadModule("utils")
+_G.RadwatchUtils = Utils    -- Set global before loading modules that depend on it
+
+local Log = loadModule("logger")
+_G.RadwatchLog = Log        -- Set global before loading modules that depend on it
+
+local Tracker = loadModule("tracker")
 _G.RadwatchTracker = Tracker
+
+local Matcher = loadModule("matcher")
 _G.RadwatchMatcher = Matcher
+
+local Router = loadModule("router")
 _G.RadwatchRouter = Router
 
 -- ─────────────────────────────────────────────────────────────────────────────────
